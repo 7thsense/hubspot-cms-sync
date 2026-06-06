@@ -1,0 +1,10 @@
+node_modules/
+coverage/
+dist/
+.sync-state/
+*.key
+.env
+.DS_Store
+npm-debug.log*
+test-results/
+playwright-report/

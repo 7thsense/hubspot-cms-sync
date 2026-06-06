@@ -1,0 +1,56 @@
+name: HubSpot CMS Sync CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hcms-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HUBSPOT_KEY_DIR: ${{ runner.temp }}/hubspot-keys
+  HCMS_TARGET: dev
+
+jobs:
+  hcms-ci:
+    name: Validate HubSpot CMS sync inputs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install project dependencies
+        run: npm ci
+
+      - name: Hydrate read-only HubSpot credentials
+        env:
+          DEV_TOKEN: ${{ secrets.HUBSPOT_DEV_PRIVATE_APP_TOKEN }}
+        run: |
+          mkdir -p "$HUBSPOT_KEY_DIR"
+          token_path="$HUBSPOT_KEY_DIR/dev.private-app-token"
+          printf '%s' "$DEV_TOKEN" > "$token_path"
+          chmod 600 "$token_path"
+
+      - name: Run sync doctor
+        run: npx --yes hubspot-cms-sync@latest doctor --root .
+
+      - name: Validate local corpus
+        run: npx --yes hubspot-cms-sync@latest corpus --root .
+
+      - name: Run read-only preflight
+        run: |
+          npx --yes hubspot-cms-sync@latest preflight \
+            "$HCMS_TARGET" --root . --read-only

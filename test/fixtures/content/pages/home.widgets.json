@@ -1,0 +1,882 @@
+{
+  "widgets": {
+    "big_stats": {
+      "body": {
+        "eyebrow": "",
+        "footnote": "*ProAthlete Inc., HubSpot customer · Year-over-year results",
+        "section_id": "",
+        "stats": [
+          {
+            "caption": "Avg increase in engaged audience, year one",
+            "num": "+44%"
+          },
+          {
+            "caption": "Reduction in send volume to non-engaged people",
+            "num": "−61%"
+          },
+          {
+            "caption": "Email revenue lift while sending 44% fewer emails*",
+            "num": "11%"
+          }
+        ]
+      },
+      "child_css": {},
+      "css": {},
+      "label": "Big stats",
+      "name": "big_stats",
+      "type": "module"
+    },
+    "comparison_table": {
+      "body": {
+        "col_capability": "Capability",
+        "col_manual": "Spreadsheets & manual work",
+        "col_native": "HubSpot / Marketo native",
+        "col_ours": "Seventh Sense",
+        "eyebrow": "One platform",
+        "intro": "Most marketing teams run their email program off a campaign calendar in a spreadsheet, manual frequency-cap math, and CSV exports for reporting. Seventh Sense replaces all of that with a single AI layer that orchestrates, schedules, recycles, and surfaces insights automatically.",
+        "rows": [
+          {
+            "capability": "Per-inbox-provider performance reporting",
+            "manual": "-",
+            "manual_class": "x",
+            "native": "-",
+            "native_class": "x",
+            "ours": "✓ Native",
+            "ours_class": "check"
+          },
+          {
+            "capability": "Per-individual send-time optimization",
+            "manual": "-",
+            "manual_class": "x",
+            "native": "Limited data / batch emails only",
+            "native_class": "fade",
+            "ours": "✓ Full engagement history / all email types",
+            "ours_class": "check"
+          },
+          {
+            "capability": "Engagement-based audience recycling",
+            "manual": "Re-engagement campaigns",
+            "manual_class": "fade",
+            "native": "-",
+            "native_class": "x",
+            "ours": "✓ Automated, native flow step",
+            "ours_class": "check"
+          },
+          {
+            "capability": "Replace your campaign scheduling calendar",
+            "manual": "Yes (and it never works)",
+            "manual_class": "fade",
+            "native": "-",
+            "native_class": "x",
+            "ours": "✓ Single rule layer",
+            "ours_class": "check"
+          },
+          {
+            "capability": "Cross-campaign frequency capping",
+            "manual": "Manual reconciliation",
+            "manual_class": "fade",
+            "native": "One rule",
+            "native_class": "fade",
+            "ours": "✓ Priority lanes",
+            "ours_class": "check"
+          },
+          {
+            "capability": "Blackout windows across all sends",
+            "manual": "Calendar holds",
+            "manual_class": "fade",
+            "native": "Per-campaign only",
+            "native_class": "fade",
+            "ours": "✓ Global, rule-driven",
+            "ours_class": "check"
+          },
+          {
+            "capability": "Priority lanes - high-value sends bypass the cap",
+            "manual": "-",
+            "manual_class": "x",
+            "native": "-",
+            "native_class": "x",
+            "ours": "✓ Configurable",
+            "ours_class": "check"
+          },
+          {
+            "capability": "Per-person engagement profiles",
+            "manual": "-",
+            "manual_class": "x",
+            "native": "Activity timeline only",
+            "native_class": "fade",
+            "ours": "✓ Inline, per record",
+            "ours_class": "check"
+          },
+          {
+            "capability": "Throttling options",
+            "manual": "-",
+            "manual_class": "x",
+            "native": "-",
+            "native_class": "x",
+            "ours": "✓ Multiple",
+            "ours_class": "check"
+          },
+          {
+            "capability": "Per-seat fees",
+            "manual": "-",
+            "manual_class": "x",
+            "native": "Yes",
+            "native_class": "fade",
+            "ours": "No - unlimited users",
+            "ours_class": "check"
+          }
+        ],
+        "section_id": ""
+      },
+      "child_css": {},
+      "css": {},
+      "label": "Tool stack replacement",
+      "name": "comparison_table",
+      "type": "module"
+    },
+    "faq": {
+      "body": {
+        "eyebrow": "FAQ",
+        "faq_items": [
+          {
+            "answer": "Yes - that's one of the biggest reasons operators choose us. Set your frequency caps, blackout windows, and priority lanes once. The AI orchestrates every send across every program automatically. No more spreadsheet juggling, no more \"who's getting what this week\" meetings.",
+            "is_open": true,
+            "question": "Can Seventh Sense replace my campaign scheduling calendar?"
+          },
+          {
+            "answer": "No - and that's by design. We've spent 12 years going deep on two platforms. If you're on Pardot, Klaviyo, or Eloqua, we'll tell you straight up that we're not the right fit.",
+            "is_open": false,
+            "question": "Will this work with my ESP if I'm not on HubSpot or Marketo?"
+          },
+          {
+            "answer": "HubSpot: about 5 minutes. Marketo: about 20 minutes. First insights and individualized profiles populate within 24 hours.",
+            "is_open": false,
+            "question": "How long does setup take?"
+          },
+          {
+            "answer": "No. We act as a scheduler, not a sender - your reporting in HubSpot or Marketo continues to work exactly as before. We add new dashboards on top.",
+            "is_open": false,
+            "question": "Will Seventh Sense affect my reporting?"
+          },
+          {
+            "answer": "In Marketo, we have dedicated API budget and self-throttle automatically. In HubSpot, we have dedicated API calls that don't compete with your other integrations.",
+            "is_open": false,
+            "question": "How does this affect API call usage?"
+          },
+          {
+            "answer": "Per-person engagement profiles surface inside the HubSpot CRM record and inside Marketo lead views - same place your marketing team is already working. No new tool to log in to.",
+            "is_open": false,
+            "question": "Where does the engagement data live?"
+          },
+          {
+            "answer": "Yes. Stair-step by contact volume, billed annually, no per-seat fees, no overage bills mid-term. Public on the pricing page above. Multi-year discounts available on request.",
+            "is_open": false,
+            "question": "Is your pricing really fixed?"
+          },
+          {
+            "answer": "SOC 2 Type II. GDPR & CCPA compliant. Trusted by global financial institutions and pharmaceutical companies. EU/regional data residency available H2 2026.",
+            "is_open": false,
+            "question": "What about security & compliance?"
+          },
+          {
+            "answer": "We don't, but onboarding, training, and continual optimization advice are included with every plan. We also have a vetted partner program of marketing agencies if you need more hands-on support.",
+            "is_open": false,
+            "question": "Do you offer professional services?"
+          }
+        ],
+        "headline_html": "Questions we get every demo.",
+        "section_id": ""
+      },
+      "child_css": {},
+      "css": {},
+      "label": "FAQ",
+      "name": "faq",
+      "type": "module"
+    },
+    "features": {
+      "body": {
+        "eyebrow": "Insights",
+        "f1_checks": [
+          {
+            "text": "Answer the questions you've always wanted to ask - and the ones you didn't know to"
+          },
+          {
+            "text": "Trends and anomalies your ESP buries - surfaced before they hurt"
+          }
+        ],
+        "f1_p1": "Most leadership teams still see email as a spam cannon - high volume, low value, a necessary evil disconnected from real revenue. That's because the metrics they get are surface-level (opens, clicks, sends), none of which prove influence.",
+        "f1_p2": "Our AI surfaces the information that reframes the channel. Performance by inbox provider, sender &amp; customer account, audience cohort trends, per-person engagement profiles, domain health - all in one place, all updated automatically.",
+        "f1_p3": "The numbers that show email for what it actually is: an influence channel that drives pipeline, retention, and revenue.",
+        "f2_checks": [
+          {
+            "text": "Cross-campaign coordination across nurtures, batches, triggered flows"
+          },
+          {
+            "text": "Blackout windows for launches, holidays, sensitive periods"
+          },
+          {
+            "text": "Priority lanes - let high-value sends bypass the cap"
+          },
+          {
+            "text": "Per-person daily &amp; weekly frequency caps that actually hold"
+          },
+          {
+            "text": "Per-individual send-time optimization baked in"
+          },
+          {
+            "text": "Spread sends evenly across the week - no more Monday blast"
+          }
+        ],
+        "f2_eyebrow": "Orchestration",
+        "f2_heading": "Retire your campaign calendar. <em>Let the AI run the schedule.</em>",
+        "f2_p1": "Operators spend hours every week sequencing campaigns by hand - juggling launch dates, worrying about frequency caps, list wrangling to prevent email collisions, applying blackouts around product launches, deciding which campaign takes priority to prevent audience annoyance. Seventh Sense replaces all of that with a single rule layer the AI executes across every program.",
+        "f2_quote": "\"I want you to get three emails this week, but I don't know which lists you're in. You could be on all of them for all I know which means I don't know what emails you'll hit a cap on.\"",
+        "f2_quote_attr": "- Sr. Marketing Operations, Marketo customer",
+        "f3_checks": [
+          {
+            "text": "Set one engagement-probability threshold. Done."
+          },
+          {
+            "text": "Protects deliverability without losing the person"
+          },
+          {
+            "text": "Recovers revenue from people you'd otherwise ignore or remove"
+          },
+          {
+            "text": "Works inside HubSpot workflows &amp; Marketo programs natively"
+          }
+        ],
+        "f3_eyebrow": "Recycling",
+        "f3_heading": "Stop annoying people who've tuned you out. <em>Bring them back</em> when they'll engage.",
+        "f3_p1": "Re-engagement campaigns capture a sliver of dormant people and torch your domain reputation in the process. Recycling is the opposite - it works automatically, in the background, on every campaign.",
+        "f3_quote": "\"Our deliverability was absolutely awful. We obviously need tools that do this kind of thing for us, because finding people with this level of expertise is rare and expensive.\"",
+        "f3_quote_attr": "- Marketing Director, HubSpot customer",
+        "f4_checks": [
+          {
+            "text": "Per-person delivery times, always up to date"
+          },
+          {
+            "text": "Probability of engaging in the next email - visible per person"
+          },
+          {
+            "text": "Time-of-day &amp; day-of-week peaks, learned from the entire history (not a limited timeframe) of a person's behavior"
+          },
+          {
+            "text": "Habits drift - the model retrains daily, so sends stay timed to who they are now"
+          },
+          {
+            "text": "12 years of send-time AI development behind every prediction"
+          }
+        ],
+        "f4_eyebrow": "Send-Time AI",
+        "f4_heading": "Every person has their own clock. <em>Our AI learns it.</em>",
+        "f4_p1": "The send-time AI Seventh Sense built its name on. Every person has their own daily rhythm - peak hours, days they engage, devices they use. Our AI learns it from ALL of your historical engagement data and triggers each send at each individual's optimal time. Always up to date, in production, across every send.",
+        "f5_cards": [
+          {
+            "body_html": "Engagement dropped 18% in 30 days. Consider increasing your recycling threshold for this specific provider.",
+            "cta_text": "See cohort →",
+            "cta_url": "#",
+            "title": "Office 365 audience needs attention"
+          },
+          {
+            "body_html": "Deliver emails when each person is most likely to open them. Recommended optimization window: greater than 48 hours.",
+            "cta_text": "Turn on →",
+            "cta_url": "#",
+            "title": "Enable Delivery-Time Optimization"
+          },
+          {
+            "body_html": "Cycle people with the lowest predicted engagement in and out from campaigns. This helps improve overall engagement quality and program performance.",
+            "cta_text": "Adjust threshold →",
+            "cta_url": "#",
+            "title": "Enable Recycling or raise your threshold"
+          },
+          {
+            "body_html": "Prevent emails from saturating customer inboxes and extend your optimization window. This reduces fatigue while improving overall engagement.",
+            "cta_text": "Configure →",
+            "cta_url": "#",
+            "title": "Configure Orchestration black-out periods"
+          }
+        ],
+        "f5_checks": [
+          {
+            "text": "12 years of cross-customer pattern learning"
+          },
+          {
+            "text": "Recommendations specific to your program and audience"
+          },
+          {
+            "text": "Strategic suggestions that go beyond Seventh Sense usage"
+          },
+          {
+            "text": "Audience, cohort, and timing optimization opportunities"
+          },
+          {
+            "text": "Continuously learning from billions of email events"
+          }
+        ],
+        "f5_eyebrow": "Recommendations <span class=\"inline-beta\">Beta</span>",
+        "f5_heading": "Strategic recommendations from <em>12 years of email AI</em>.",
+        "f5_p1": "The AI advisor that mines a decade+ of cross-customer email program patterns - hundreds of billions of opens, clicks, and engagement signals - to tell you specifically how to make your email channel more profitable, more influential, and more successful. Not just better Seventh Sense usage. Better email marketing, period.",
+        "headline_html": "The numbers your leadership <em>actually wants</em> to see.",
+        "section_id": ""
+      },
+      "child_css": {},
+      "css": {},
+      "label": "Feature deep-dives",
+      "name": "features",
+      "type": "module"
+    },
+    "final_cta": {
+      "body": {
+        "eyebrow": "",
+        "headline_html": "The world's currency<br>isn't money - <span class=\"serif\" style=\"color:var(--brand-2);\">it's influence.</span>",
+        "section_id": "",
+        "subhead": "We're all drowning in email. We give you the AI to ensure your message is seen and provide the best opportunity for engagement."
+      },
+      "child_css": {},
+      "css": {},
+      "label": "Final CTA",
+      "name": "final_cta",
+      "type": "module"
+    },
+    "hero": {
+      "body": {
+        "eyebrow": "Built for HubSpot & Marketo since 2014",
+        "headline_html": "<span class=\"hero-line\">Pressing send is easy.</span>\n      <span class=\"hero-line\">Delivering <em>real influence</em> is hard.</span>",
+        "lede": "Every email list has two kinds of people: the ones engaging, and the ones being worn out. Seventh Sense's AI knows which is which - and what to do about it.",
+        "primary_cta": {
+          "text": "Get started free →",
+          "url": "/demo"
+        },
+        "secondary_cta": {
+          "text": "Get a demo",
+          "url": "#demo"
+        },
+        "secondary_cta_prefix": "Not ready to connect to HubSpot or Marketo?",
+        "section_id": "",
+        "stats": [
+          {
+            "caption": "Personalized emails orchestrated and scheduled monthly",
+            "num": "500M+"
+          },
+          {
+            "caption": "Email performance improvement",
+            "num": "+7–100%"
+          },
+          {
+            "caption": "Helping HubSpot and Marketo customers drive more influence from their email channel",
+            "num": "12 yrs"
+          },
+          {
+            "caption": "Trusted by global financial, energy, consulting & pharma brands",
+            "num": "SOC 2 Type II"
+          }
+        ],
+        "synthetic_cta": {
+          "text": "Experience the platform with synthetic data →",
+          "url": "#"
+        }
+      },
+      "child_css": {},
+      "css": {},
+      "label": "Hero",
+      "name": "hero",
+      "type": "module"
+    },
+    "logo_strip": {
+      "body": {
+        "eyebrow": "The marketing teams that stopped pressing send and started paying attention",
+        "logos": [
+          {
+            "caption": "SAP"
+          },
+          {
+            "caption": "EDUCATIVE"
+          },
+          {
+            "caption": "DEMANDBASE"
+          },
+          {
+            "caption": "CARAHSOFT"
+          },
+          {
+            "caption": "ROCKETREACH"
+          },
+          {
+            "caption": "REDPANDA"
+          },
+          {
+            "caption": "GREENPEACE"
+          },
+          {
+            "caption": "DATABOX"
+          }
+        ],
+        "section_id": ""
+      },
+      "child_css": {},
+      "css": {},
+      "label": "Logo strip",
+      "name": "logo_strip",
+      "type": "module"
+    },
+    "pillars": {
+      "body": {
+        "beta_body": "12 years of cross-customer email program learning, distilled into AI-driven recommendations specific to your business. Make your entire email channel more profitable, more influential, and more successful.",
+        "beta_bullets": [
+          {
+            "text": "12 years of cross-customer email program insights"
+          },
+          {
+            "text": "Suggestions grounded in your data, not generic best practices"
+          },
+          {
+            "text": "Recommendations that go beyond Seventh Sense - improve your whole email channel"
+          },
+          {
+            "text": "Continuously learning from billions of email events"
+          }
+        ],
+        "beta_eyebrow": "Recommendations",
+        "beta_heading": "Better email marketing. Not just better Seventh Sense usage.",
+        "beta_icon_svg": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 2v2\"/><path d=\"M12 20v2\"/><path d=\"M5 12H3\"/><path d=\"M21 12h-2\"/><path d=\"M18.36 5.64l-1.41 1.41\"/><path d=\"M7.05 16.95l-1.41 1.41\"/><path d=\"M18.36 18.36l-1.41-1.41\"/><path d=\"M7.05 7.05L5.64 5.64\"/><circle cx=\"12\" cy=\"12\" r=\"5\"/></svg>",
+        "beta_tag": "Coming soon · Beta",
+        "eyebrow": "The platform",
+        "intro_text": "We don't replace HubSpot or Marketo - we make them dramatically smarter. And when you want to see what's hiding under the hood at the inbox-provider level, person level, or program level, the Seventh Sense analytics system goes deeper than what HubSpot or Marketo ship natively — and tells you what to do about it.",
+        "pillars": [
+          {
+            "body_html": "Per-inbox-provider performance, audience health, and per-person engagement profiles - surfaced automatically and worth showing in a leadership review. The information your marketing platform doesn't ship with.",
+            "bullets": [
+              {
+                "text": "Per-inbox-provider performance reporting (Google Workspace, O365, Gmail, etc.)"
+              },
+              {
+                "text": "Per-person engagement profiles"
+              },
+              {
+                "text": "Domain &amp; audience-health monitoring"
+              },
+              {
+                "text": "Trends and anomalies your ESP buries"
+              }
+            ],
+            "eyebrow": "Insights",
+            "heading": "The numbers your leadership actually wants to see.",
+            "icon_svg": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M3 3v18h18\"/><path d=\"M7 14l4-4 4 4 5-5\"/></svg>"
+          },
+          {
+            "body_html": "Set the rules once - frequency caps, blackout windows, priority lanes - and the AI orchestrates every send across every program automatically. No more email collisions. No more spreadsheet wars.",
+            "bullets": [
+              {
+                "text": "Cross-campaign coordination across nurtures, batches, triggered flows"
+              },
+              {
+                "text": "Blackout windows for launches, holidays, sensitive periods"
+              },
+              {
+                "text": "Priority lanes - let high-value sends bypass the cap"
+              },
+              {
+                "text": "Per-person daily &amp; weekly frequency caps that actually hold"
+              }
+            ],
+            "eyebrow": "Orchestration",
+            "heading": "Retire the campaign calendar.",
+            "icon_svg": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M2 12h20\"/><path d=\"M12 2v20\"/></svg>"
+          },
+          {
+            "body_html": "Set an engagement-probability threshold. The AI quietly stops sending to people who'd hurt your reputation, and brings them back when they're ready to re-engage. No re-engagement campaigns required.",
+            "bullets": [
+              {
+                "text": "Protects domain &amp; IP reputation automatically"
+              },
+              {
+                "text": "Recovers people you'd otherwise leave for dead"
+              },
+              {
+                "text": "Captures the dormant revenue every list is leaving on the table"
+              },
+              {
+                "text": "Operates inside HubSpot workflows &amp; Marketo programs natively"
+              }
+            ],
+            "eyebrow": "Audience Recycling",
+            "heading": "Stop annoying the people who've tuned you out.",
+            "icon_svg": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M21 12a9 9 0 1 1-6.5-8.6\"/><path d=\"M21 4v5h-5\"/></svg>"
+          },
+          {
+            "body_html": "The capability we're known for. The AI learns each person's daily rhythm, updates in real time, and triggers each send at their peak attention window. Not a global send time. Not a time-zone guess. A unique one for every person.",
+            "bullets": [
+              {
+                "text": "Per-person delivery times, always up to date"
+              },
+              {
+                "text": "Works across nurtures, batches, and triggered flows"
+              },
+              {
+                "text": "12 years of send-time AI development behind it"
+              },
+              {
+                "text": "Throttles automatically - no more burst-then-blocked sends"
+              }
+            ],
+            "eyebrow": "Send-Time Optimization",
+            "heading": "Every person has their own clock. Our AI learns it.",
+            "icon_svg": "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 6v6l4 2\"/></svg>"
+          }
+        ],
+        "section_id": "product"
+      },
+      "child_css": {},
+      "css": {},
+      "label": "Five pillars",
+      "name": "pillars",
+      "type": "module"
+    },
+    "platform_tabs": {
+      "body": {
+        "eyebrow": "Native integrations",
+        "hubspot_body": "Connect your HubSpot portal. The AI starts training itself on the engagement data sitting in your account since the day you started using HubSpot - turning years of historical data into individual subscriber profiles and actionable insights.",
+        "hubspot_card1_eyebrow": "Workflow action",
+        "hubspot_card1_row1_label": "Email:",
+        "hubspot_card1_row1_value": "Q2 nurture · email 3",
+        "hubspot_card1_row2_label": "Delivery window:",
+        "hubspot_card1_row2_value": "Next 36 hours",
+        "hubspot_card1_row3_label": "Recycling threshold:",
+        "hubspot_card1_row3_value": "7%",
+        "hubspot_card1_title": "Send email at optimized time",
+        "hubspot_card2_email": "sarah.m@acme.com",
+        "hubspot_card2_eyebrow": "CRM property",
+        "hubspot_card2_score": "82% · High",
+        "hubspot_card2_title": "Engagement probability",
+        "hubspot_card_title": "Inside HubSpot",
+        "hubspot_checks": [
+          {
+            "text": "Native workflow steps for delivery time, recycling, throttling"
+          },
+          {
+            "text": "Engagement profiles inside the HubSpot CRM - sales sees them too"
+          },
+          {
+            "text": "Lookalike scheduling for people who have never engaged"
+          },
+          {
+            "text": "Pause/resume any send mid-flight"
+          },
+          {
+            "text": "Sequence enrollment throttling (that actually throttles)"
+          }
+        ],
+        "hubspot_footer_rest": "· reviews on the HubSpot Marketplace · HubSpot Impact Award 2x",
+        "hubspot_footer_strong": "★ 5 / 5",
+        "hubspot_heading": "5-minute install. 24-hour first insights.",
+        "hubspot_tab_label": "For HubSpot",
+        "intro_text": "We've spent 12 years going deep into two platforms instead of an inch-deep into ten. The result: integrations so deep they disappear.",
+        "marketo_body": "100k leads or 5M, we scale. Our internal scheduler kicks in when Marketo's triggering system can't keep up - so big sends don't fall to their knees.",
+        "marketo_card1_eyebrow": "Smart Campaign flow step",
+        "marketo_card1_row1_label": "Delivery window:",
+        "marketo_card1_row1_value": "Next 72 hours",
+        "marketo_card1_row2_label": "Throttle:",
+        "marketo_card1_row2_value": "Personalized",
+        "marketo_card1_row3_label": "Target open rate:",
+        "marketo_card1_row3_value": "22%",
+        "marketo_card1_title": "Schedule with Seventh Sense",
+        "marketo_card2_eyebrow": "Daily throughput",
+        "marketo_card2_row1_label": "Max API calls per day:",
+        "marketo_card2_row1_value": "3,000",
+        "marketo_card2_row2_label": "Native flow steps calls per day:",
+        "marketo_card2_row2_value": "∞",
+        "marketo_card2_title": "API vs. native flow steps",
+        "marketo_card_title": "Inside Marketo",
+        "marketo_checks": [
+          {
+            "text": "Self-service flow steps that work in any program"
+          },
+          {
+            "text": "Automatic API throttling - won't blow up your call budget"
+          },
+          {
+            "text": "Inbox-provider breakdown Marketo's reporting can't give you"
+          },
+          {
+            "text": "2+ years of historical engagement → individual profiles"
+          },
+          {
+            "text": "Per-inbox-provider performance reporting Marketo can't surface natively"
+          }
+        ],
+        "marketo_footer_strong": "Adobe Exchange Partner",
+        "marketo_heading": "12-minute setup. Built for big lists & complex programs.",
+        "marketo_tab_label": "For Marketo",
+        "section_id": "hubspot-marketo"
+      },
+      "child_css": {},
+      "css": {},
+      "label": "HubSpot / Marketo tabs",
+      "name": "platform_tabs",
+      "type": "module"
+    },
+    "pricing": {
+      "body": {
+        "cap_amount": "500,000 contacts",
+        "cap_prefix": "Need more than",
+        "cap_suffix": "for custom pricing.",
+        "cards": [
+          {
+            "amount": "400",
+            "amount_is_custom": false,
+            "billing": "",
+            "billing_per_contact": "$0.192/contact/year",
+            "billing_prefix": "Billed annually",
+            "billing_year": "$4,800",
+            "cta": {
+              "text": "Get started free",
+              "url": "/demo"
+            },
+            "cta_style": "btn-brand",
+            "features": [
+              {
+                "head": true,
+                "text": "Everything included"
+              },
+              {
+                "head": false,
+                "text": "AI Orchestration - caps, blackouts, priority lanes, cross-campaign coordination"
+              },
+              {
+                "head": false,
+                "text": "AI Send-Time Optimization - per-person, updated in real time"
+              },
+              {
+                "head": false,
+                "text": "AI Audience Recycling - automated suppression and reactivation"
+              },
+              {
+                "head": false,
+                "text": "AI-Surfaced Insights - per-inbox-provider performance, audience health, profiles in CRM"
+              },
+              {
+                "head": false,
+                "text": "Unlimited usage - schedule as many emails as you'd like"
+              },
+              {
+                "head": false,
+                "text": "Nurtures + batch + triggered email campaigns"
+              },
+              {
+                "head": false,
+                "text": "Email throttling & pause/resume any send"
+              },
+              {
+                "head": false,
+                "text": "A/B + multivariate testing"
+              },
+              {
+                "head": false,
+                "text": "Engagement profiles inside the HubSpot CRM record"
+              },
+              {
+                "head": false,
+                "text": "Personalized onboarding included"
+              },
+              {
+                "head": false,
+                "text": "Unlimited users · email & knowledge-base support"
+              }
+            ],
+            "per": "/mo",
+            "popular": true,
+            "tag": "Most popular",
+            "tagline": "All four AI capabilities, the whole platform. Stair-stepped in 5,000-contact increments.",
+            "title": "Business"
+          },
+          {
+            "amount": "Custom",
+            "amount_is_custom": true,
+            "billing": "Starts at 150K marketing contacts",
+            "billing_per_contact": "",
+            "billing_prefix": "",
+            "billing_year": "",
+            "cta": {
+              "text": "Talk to sales",
+              "url": "#"
+            },
+            "cta_style": "btn-outline",
+            "features": [
+              {
+                "head": true,
+                "text": "Everything in Business, plus"
+              },
+              {
+                "head": false,
+                "text": "SSO (Single Sign-On) availability"
+              },
+              {
+                "head": false,
+                "text": "Phone & 24×7 priority support"
+              },
+              {
+                "head": false,
+                "text": "Dedicated customer success manager"
+              },
+              {
+                "head": false,
+                "text": "Custom MSA / DPA / SLA - your legal team works with ours"
+              },
+              {
+                "head": false,
+                "text": "Multi-portal & agency management"
+              }
+            ],
+            "per": "",
+            "popular": false,
+            "tag": "",
+            "tagline": "For large lists, complex stacks, and custom procurement.",
+            "title": "Enterprise"
+          }
+        ],
+        "eyebrow": "Pricing",
+        "footer_notes": [
+          {
+            "strong": "No",
+            "text": "per-seat fees"
+          },
+          {
+            "strong": "No",
+            "text": "overage charges mid-term"
+          },
+          {
+            "strong": "No",
+            "text": "fees on email volume"
+          },
+          {
+            "strong": "Annual",
+            "text": "contract · cancel before renewal"
+          },
+          {
+            "strong": "SOC 2 Type II",
+            "text": "· GDPR · CCPA"
+          }
+        ],
+        "headline_default": "Transparent. <em>No surprises.</em> Priced per contact, not per seat.",
+        "section_id": "pricing",
+        "slider_help": "How many marketing contacts does your subscription include?",
+        "slider_label": "HubSpot marketing contacts",
+        "subhead": "One annual subscription. Onboarding, training, support, and unlimited users included. Cancel any time before renewal.",
+        "toggle_hubspot_label": "HubSpot",
+        "toggle_marketo_label": "Marketo"
+      },
+      "child_css": {},
+      "css": {},
+      "label": "Pricing calculator",
+      "name": "pricing",
+      "type": "module"
+    },
+    "problem": {
+      "body": {
+        "body_para_1": "\"Delivered\" only means the message didn't bounce. It tells you nothing about whether it actually made it to the inbox, spam or quarantine.",
+        "body_para_2": "Adding to this, the inbox providers are never going to tell you either (nor will seed lists) because of malicious actors.",
+        "body_para_3": "Inbox providers care about one thing: what percentage of their users engage with emails coming from you.",
+        "body_para_4": "Keep sending to people who don't engage, and you train Google, Microsoft & Others to filter every email you send to the people who would. Our AI surfaces what's really happening - per inbox provider, per audience cohort, per email, per individual - and quietly fixes it before your next send.",
+        "eyebrow": "The reality your ESP won't show you",
+        "funnel_info_icon": "i",
+        "funnel_rows": [
+          {
+            "caption": "Audience size: 520,000",
+            "drop_badge": "",
+            "fill_class": "light",
+            "width": "100%"
+          },
+          {
+            "caption": "Inbox impressions: 508,000 - 98%",
+            "drop_badge": "",
+            "fill_class": "light",
+            "width": "98%"
+          },
+          {
+            "caption": "Influenced: 124,000 - 24%",
+            "drop_badge": "Biggest drop -76%",
+            "fill_class": "dark",
+            "width": "24%"
+          },
+          {
+            "caption": "Action taken: 12,400 - 2%",
+            "drop_badge": "",
+            "fill_class": "dark",
+            "width": "2%"
+          }
+        ],
+        "funnel_title": "Influence Conversion Funnel",
+        "headline_html": "Your dashboard says <span class=\"strike\">99.8% delivered</span>. Your audience says <em class=\"serif\">\"I never saw it.\"</em>",
+        "quote_by": "- Senior Marketing Operations, Marketo customer",
+        "quote_text": "\"Achieving this level of detail about our email channel has been a nightmare. There's no other tools I've been able to find that give you anything like this.\"",
+        "rate_label": "Rate",
+        "rate_value": "2.4%",
+        "section_id": "problem",
+        "trend_badge": "↗ 0.3",
+        "trend_meta": "vs last period"
+      },
+      "child_css": {},
+      "css": {},
+      "label": "Problem - Influence funnel",
+      "name": "problem",
+      "type": "module"
+    },
+    "try_it_free": {
+      "body": {
+        "contacts_label": "Marketing contacts / leads",
+        "contacts_options": [
+          {
+            "value": "Under 25,000"
+          },
+          {
+            "value": "25k – 100k"
+          },
+          {
+            "value": "100k – 500k"
+          },
+          {
+            "value": "500k – 2M"
+          },
+          {
+            "value": "2M+"
+          }
+        ],
+        "email_label": "Work email",
+        "email_placeholder": "you@company.com",
+        "eyebrow": "Free trial · No credit card required",
+        "features": [
+          {
+            "caption": "Full platform access"
+          },
+          {
+            "caption": "No credit card required"
+          },
+          {
+            "caption": "First insights within 24 hours"
+          }
+        ],
+        "fine_print": "Connect read-only first. We never touch sends until you tell us to.",
+        "form_id": "@form:demo",
+        "form_success_html": "<h3>You're in — check your inbox.</h3><p>We'll email next steps to connect HubSpot or Marketo and get your first insights flowing within 24 hours.</p>",
+        "intro": "Connect HubSpot or Marketo and start using the full platform. Within 24 hours you'll have per-person engagement profiles, actionable performance insights, and AI-driven optimization running on your live sends.",
+        "platform_label": "Platform",
+        "platform_options": [
+          {
+            "value": "HubSpot"
+          },
+          {
+            "value": "Marketo"
+          }
+        ],
+        "section_id": "try-it-free",
+        "submit_label": "Start free trial →"
+      },
+      "child_css": {},
+      "css": {},
+      "label": "Try it free CTA",
+      "name": "try_it_free",
+      "type": "module"
+    }
+  }
+}

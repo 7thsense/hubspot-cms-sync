@@ -1,0 +1,4 @@
+{
+  "dev": { "portalId": "246389711", "label": "dev fixture" },
+  "prod": { "portalId": "529456", "label": "prod fixture" }
+}

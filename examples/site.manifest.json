@@ -1,0 +1,19 @@
+{
+  "theme": {
+    "name": "example-theme"
+  },
+  "blog": {
+    "slug": "blog",
+    "itemTemplate": "example-theme/templates/blog-post.html",
+    "listingTemplate": "example-theme/templates/blog.html"
+  },
+  "forms": [],
+  "pages": [],
+  "uiGated": [
+    "blogContainerCreate",
+    "domainConnect",
+    "homepageDesignation",
+    "themeSettingsValues",
+    "nativeMenus"
+  ]
+}

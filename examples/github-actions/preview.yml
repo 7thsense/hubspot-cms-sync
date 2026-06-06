@@ -1,0 +1,71 @@
+name: HubSpot CMS Sync Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: hcms-preview-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  HUBSPOT_KEY_DIR: ${{ runner.temp }}/hubspot-keys
+  HCMS_TARGET: preview
+  SITE_BASE_URL: ${{ secrets.PREVIEW_SITE_BASE_URL }}
+
+jobs:
+  preview:
+    name: Deploy PR preview
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.pull_request.draft }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install project dependencies
+        run: npm ci
+
+      - name: Hydrate preview HubSpot credentials
+        env:
+          PREVIEW_TOKEN: ${{ secrets.HUBSPOT_PREVIEW_PRIVATE_APP_TOKEN }}
+        run: |
+          mkdir -p "$HUBSPOT_KEY_DIR"
+          token_path="$HUBSPOT_KEY_DIR/preview.private-app-token"
+          printf '%s' "$PREVIEW_TOKEN" > "$token_path"
+          chmod 600 "$token_path"
+
+      - name: Validate preview deployment plan
+        run: |
+          npx --yes hubspot-cms-sync@latest doctor --root .
+          npx --yes hubspot-cms-sync@latest corpus --root .
+          npx --yes hubspot-cms-sync@latest preflight "$HCMS_TARGET" --root .
+          npx --yes hubspot-cms-sync@latest plan \
+            "$HCMS_TARGET" --root . --out .hcms/preview-plan.md
+
+      - name: Push preview content
+        run: |
+          npx --yes hubspot-cms-sync@latest push \
+            "$HCMS_TARGET" --root . --publish
+
+      - name: Verify preview
+        run: npx --yes hubspot-cms-sync@latest verify "$HCMS_TARGET" --root .
+
+      - name: Upload preview plan
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcms-preview-plan
+          path: .hcms/preview-plan.md
+          if-no-files-found: ignore

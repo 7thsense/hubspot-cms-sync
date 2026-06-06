@@ -1,0 +1,49 @@
+{
+  "name": "hubspot-cms-sync",
+  "version": "0.1.0",
+  "description": "Git-backed bidirectional sync for HubSpot CMS themes, content, blogs, forms, and assets.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/7thsense/hubspot-cms-sync.git"
+  },
+  "bugs": {
+    "url": "https://github.com/7thsense/hubspot-cms-sync/issues"
+  },
+  "homepage": "https://github.com/7thsense/hubspot-cms-sync#readme",
+  "engines": {
+    "node": ">=20.10.0",
+    "npm": ">=10"
+  },
+  "bin": {
+    "hubspot-cms-sync": "./bin/hubspot-cms-sync.mjs",
+    "hcms": "./bin/hubspot-cms-sync.mjs"
+  },
+  "exports": {
+    ".": "./src/index.mjs",
+    "./adapters/*": "./src/adapters/*.mjs",
+    "./lib/*": "./src/lib/*.mjs",
+    "./manifest": "./src/manifest.mjs",
+    "./preflight": "./src/preflight.mjs",
+    "./cta-inventory": "./src/cta-inventory.mjs",
+    "./corpus-scan": "./src/corpus-scan.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "docs/",
+    "examples/",
+    "skill/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/**/*.test.mjs",
+    "test:unit": "node --test test/unit/*.test.mjs test/integration/corpus.test.mjs",
+    "test:integration": "RUN_INTEGRATION=1 node --test test/integration/roundtrip.test.mjs",
+    "lint": "node --check bin/hubspot-cms-sync.mjs && node bin/hubspot-cms-sync.mjs --help >/dev/null",
+    "prepare": "npm run lint",
+    "prepublishOnly": "npm test && npm run lint && npm pack --dry-run"
+  }
+}

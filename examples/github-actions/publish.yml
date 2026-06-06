@@ -1,0 +1,82 @@
+name: HubSpot CMS Sync Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: HubSpot sync target from the consuming repo config
+        required: true
+        default: prod
+        type: choice
+        options:
+          - prod
+          - staging
+      dry_run:
+        description: Build and validate the plan without writing to HubSpot
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: hcms-publish-${{ inputs.target }}
+  cancel-in-progress: false
+
+env:
+  HUBSPOT_KEY_DIR: ${{ runner.temp }}/hubspot-keys
+  HCMS_TARGET: ${{ inputs.target }}
+  SITE_BASE_URL: ${{ secrets.SITE_BASE_URL }}
+
+jobs:
+  publish:
+    name: Publish HubSpot CMS target
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install project dependencies
+        run: npm ci
+
+      - name: Hydrate target HubSpot credentials
+        env:
+          PROD_TOKEN: ${{ secrets.HUBSPOT_PROD_PRIVATE_APP_TOKEN }}
+        run: |
+          mkdir -p "$HUBSPOT_KEY_DIR"
+          token_path="$HUBSPOT_KEY_DIR/prod.private-app-token"
+          printf '%s' "$PROD_TOKEN" > "$token_path"
+          chmod 600 "$token_path"
+
+      - name: Build publish plan
+        run: |
+          npx --yes hubspot-cms-sync@latest doctor --root .
+          npx --yes hubspot-cms-sync@latest corpus --root .
+          npx --yes hubspot-cms-sync@latest preflight "$HCMS_TARGET" --root .
+          npx --yes hubspot-cms-sync@latest plan \
+            "$HCMS_TARGET" --root . --out .hcms/publish-plan.md
+
+      - name: Publish to HubSpot
+        if: ${{ !inputs.dry_run }}
+        run: |
+          npx --yes hubspot-cms-sync@latest push \
+            "$HCMS_TARGET" --root . --publish
+          npx --yes hubspot-cms-sync@latest verify "$HCMS_TARGET" --root .
+
+      - name: Upload publish plan
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcms-publish-plan-${{ inputs.target }}
+          path: .hcms/publish-plan.md
+          if-no-files-found: ignore
