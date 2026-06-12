@@ -1,39 +1,15 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import { Command } from 'commander';
+
 import { loadConfig } from '../src/config.mjs';
 import { pull } from '../src/pull.mjs';
-import { push } from '../src/push.mjs';
+import { push, preflightRefs } from '../src/push.mjs';
 import { main as preflightMain } from '../src/preflight.mjs';
 import { main as republishMain } from '../src/republish.mjs';
 import { main as manifestMain } from '../src/manifest.mjs';
-
-function usage() {
-  console.log(`usage: hcms [--root <path>] <command> [args]
-
-commands:
-  pull <account>
-  push <account> [--publish] [--dry-run]
-  preflight <account>
-  republish <account|portalId> [--all] [--blog] [slugs...]
-  corpus [paths...]
-  manifest [args...]
-  doctor
-`);
-}
-
-function parseGlobal(argv) {
-  const out = { root: process.cwd(), args: [] };
-  for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i];
-    if (a === '--root') {
-      out.root = argv[++i];
-    } else {
-      out.args.push(a);
-    }
-  }
-  return out;
-}
+import { renderRedirectReport, syncRedirects } from '../src/redirects.mjs';
 
 function runNodeScript(script, args, { cwd }) {
   return new Promise((resolve) => {
@@ -42,74 +18,124 @@ function runNodeScript(script, args, { cwd }) {
   });
 }
 
-async function main(argv = process.argv.slice(2)) {
-  const { root, args } = parseGlobal(argv);
-  const [cmd, ...rest] = args;
-  if (!cmd || cmd === '-h' || cmd === '--help') {
-    usage();
-    return cmd ? 0 : 2;
-  }
-
-  const config = await loadConfig({ root });
-
-  if (cmd === 'doctor') {
-    console.log(`root: ${config.root}`);
-    console.log(`accounts: ${config.accountsPath}`);
-    console.log(`content: ${config.contentDirPath}`);
-    console.log(`manifest: ${config.manifestFilePath}`);
-    console.log(`sync state: ${config.syncStateDirPath}`);
-    console.log(`theme: ${config.theme.name}`);
-    return 0;
-  }
-
-  if (cmd === 'pull') {
-    const account = rest[0];
-    if (!account) throw new Error('pull requires <account>');
-    await pull(account, { config });
-    return 0;
-  }
-
-  if (cmd === 'push') {
-    const publish = rest.includes('--publish');
-    const dryRun = rest.includes('--dry-run');
-    const account = rest.find((a) => !a.startsWith('--'));
-    if (!account) throw new Error('push requires <account>');
-    if (dryRun) {
-      // Current engine preflight is the no-write plan surface. A future plan command
-      // can add per-adapter write summaries.
-      const { preflightRefs } = await import('../src/push.mjs');
-      preflightRefs(config.contentDirPath);
-      console.log(`dry-run push preflight passed for ${account}`);
-      return 0;
-    }
-    await push(account, { publish, config });
-    return 0;
-  }
-
-  if (cmd === 'preflight') {
-    return preflightMain(rest, { config });
-  }
-
-  if (cmd === 'republish') {
-    return republishMain(rest, { config });
-  }
-
-  if (cmd === 'manifest') {
-    return manifestMain(rest, { config });
-  }
-
-  if (cmd === 'corpus') {
-    const script = new URL('../src/corpus-scan.mjs', import.meta.url).pathname;
-    return runNodeScript(script, rest, { cwd: config.root });
-  }
-
-  usage();
-  return 2;
+async function withConfig(opts) {
+  return loadConfig({ root: opts.root });
 }
 
-main().then((code) => {
-  process.exitCode = code;
-}).catch((e) => {
+async function main(argv = process.argv) {
+  const program = new Command();
+
+  program
+    .name('hcms')
+    .description('Git-backed HubSpot CMS sync')
+    .option('--root <path>', 'repo root', process.cwd())
+    .showHelpAfterError();
+
+  program
+    .command('doctor')
+    .description('print resolved configuration')
+    .action(async () => {
+      const config = await withConfig(program.opts());
+      console.log(`root: ${config.root}`);
+      console.log(`accounts: ${config.accountsPath}`);
+      console.log(`content: ${config.contentDirPath}`);
+      console.log(`manifest: ${config.manifestFilePath}`);
+      console.log(`redirects: ${config.redirectsFilePath || '(none)'}`);
+      console.log(`sync state: ${config.syncStateDirPath}`);
+      console.log(`theme: ${config.theme.name}`);
+    });
+
+  program
+    .command('pull')
+    .description('pull HubSpot content into the repo')
+    .argument('<account>')
+    .action(async (account) => {
+      const config = await withConfig(program.opts());
+      await pull(account, { config });
+    });
+
+  program
+    .command('push')
+    .description('push repo content to HubSpot')
+    .argument('<account>')
+    .option('--publish', 'publish/schedule pushed content')
+    .option('--dry-run', 'run local push preflight only')
+    .action(async (account, options) => {
+      const config = await withConfig(program.opts());
+      if (options.dryRun) {
+        preflightRefs(config.contentDirPath);
+        console.log(`dry-run push preflight passed for ${account}`);
+        return;
+      }
+      await push(account, { publish: !!options.publish, config });
+    });
+
+  program
+    .command('preflight')
+    .description('check account readiness before a push')
+    .argument('<account>')
+    .action(async (account) => {
+      const config = await withConfig(program.opts());
+      const code = await preflightMain([account], { config });
+      if (code) process.exitCode = code;
+    });
+
+  program
+    .command('redirects')
+    .description('plan or apply managed URL redirects')
+    .argument('<account>')
+    .option('--file <path>', 'redirect spec CSV or JSON; defaults to config.redirectsFile')
+    .option('--apply', 'write creates/updates to HubSpot')
+    .action(async (account, options) => {
+      const config = await withConfig(program.opts());
+      const result = await syncRedirects(account, {
+        file: options.file,
+        apply: !!options.apply,
+        config,
+      });
+      console.log(renderRedirectReport(result));
+    });
+
+  program
+    .command('republish')
+    .description('republish live pages and/or blog posts')
+    .allowUnknownOption()
+    .allowExcessArguments()
+    .argument('[args...]')
+    .action(async (args) => {
+      const config = await withConfig(program.opts());
+      const code = await republishMain(args, { config });
+      if (code) process.exitCode = code;
+    });
+
+  program
+    .command('corpus')
+    .description('scan repo content for unsafe refs and HubSpot artifacts')
+    .allowUnknownOption()
+    .argument('[paths...]')
+    .action(async (paths) => {
+      const config = await withConfig(program.opts());
+      const script = new URL('../src/corpus-scan.mjs', import.meta.url).pathname;
+      const code = await runNodeScript(script, paths, { cwd: config.root });
+      if (code) process.exitCode = code;
+    });
+
+  program
+    .command('manifest')
+    .description('manifest utilities')
+    .allowUnknownOption()
+    .allowExcessArguments()
+    .argument('[args...]')
+    .action(async (args) => {
+      const config = await withConfig(program.opts());
+      const code = await manifestMain(args, { config });
+      if (code) process.exitCode = code;
+    });
+
+  await program.parseAsync(argv);
+}
+
+main().catch((e) => {
   console.error(`hcms failed: ${e.message}`);
   process.exitCode = 1;
 });

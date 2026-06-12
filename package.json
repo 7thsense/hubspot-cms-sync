@@ -1,6 +1,6 @@
 {
   "name": "hubspot-cms-sync",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Git-backed bidirectional sync for HubSpot CMS themes, content, blogs, forms, and assets.",
   "type": "module",
   "license": "MIT",
@@ -17,8 +17,8 @@
     "npm": ">=10"
   },
   "bin": {
-    "hubspot-cms-sync": "./bin/hubspot-cms-sync.mjs",
-    "hcms": "./bin/hubspot-cms-sync.mjs"
+    "hubspot-cms-sync": "bin/hubspot-cms-sync.mjs",
+    "hcms": "bin/hubspot-cms-sync.mjs"
   },
   "exports": {
     ".": "./src/index.mjs",
@@ -26,6 +26,7 @@
     "./lib/*": "./src/lib/*.mjs",
     "./manifest": "./src/manifest.mjs",
     "./preflight": "./src/preflight.mjs",
+    "./redirects": "./src/redirects.mjs",
     "./cta-inventory": "./src/cta-inventory.mjs",
     "./corpus-scan": "./src/corpus-scan.mjs"
   },
@@ -45,5 +46,8 @@
     "lint": "node --check bin/hubspot-cms-sync.mjs && node bin/hubspot-cms-sync.mjs --help >/dev/null",
     "prepare": "npm run lint",
     "prepublishOnly": "npm test && npm run lint && npm pack --dry-run"
+  },
+  "dependencies": {
+    "commander": "^14.0.3"
   }
 }

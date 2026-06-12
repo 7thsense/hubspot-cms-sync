@@ -4,6 +4,7 @@ export default {
   contentDir: 'content',
   syncStateDir: '.sync-state',
   manifestPath: 'site.manifest.json',
+  redirectsFile: 'content/redirects.csv',
   readOnlyPortalIds: [],
   knownPortalIds: [],
   assetHosts: {

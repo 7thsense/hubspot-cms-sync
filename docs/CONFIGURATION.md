@@ -12,6 +12,7 @@ export default {
   contentDir: 'content',
   syncStateDir: '.sync-state',
   manifestPath: 'site.manifest.json',
+  redirectsFile: 'content/redirects.csv',
   readOnlyPortalIds: ['529456'],
   knownPortalIds: ['529456', '246389711'],
   assetHosts: {
@@ -63,8 +64,12 @@ export default {
 - The config loader validates shape and prints remediation, not stack traces.
 - `site.manifest.json` remains the deploy surface for content, pages, forms, and
   blog.
+- Repo-stored redirects are a separate deploy surface. `redirectsFile` points to
+  a CSV or JSON spec consumed by `hcms redirects <account> [--apply]`.
 - `hubspot-cms-sync.config.mjs` controls environment policy and filesystem
   layout.
+- Managed redirects default to `isOnlyAfterNotFound: false`, so a release can
+  intentionally redirect an old live page path without a manual archive step.
 
 ## Open Config Questions
 

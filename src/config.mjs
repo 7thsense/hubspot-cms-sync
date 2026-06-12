@@ -14,6 +14,7 @@ export function defaultConfig(root = process.cwd()) {
     contentDir: 'content',
     syncStateDir: '.sync-state',
     manifestPath: 'site.manifest.json',
+    redirectsFile: null,
     readOnlyPortalIds: [],
     knownPortalIds: [],
     assetHosts: {
@@ -67,6 +68,7 @@ export function resolveConfigPaths(cfg) {
     contentDirPath: abs(cfg.contentDir),
     syncStateDirPath: abs(cfg.syncStateDir),
     manifestFilePath: abs(cfg.manifestPath),
+    redirectsFilePath: cfg.redirectsFile ? abs(cfg.redirectsFile) : null,
   };
 }
 
@@ -94,6 +96,9 @@ export function validateConfig(cfg) {
   if (!cfg.contentDir) errors.push('missing contentDir');
   if (!cfg.syncStateDir) errors.push('missing syncStateDir');
   if (!cfg.manifestPath) errors.push('missing manifestPath');
+  if (cfg.redirectsFile != null && typeof cfg.redirectsFile !== 'string') {
+    errors.push('redirectsFile must be a string when set');
+  }
   if (!Array.isArray(cfg.readOnlyPortalIds)) errors.push('readOnlyPortalIds must be an array');
   if (!Array.isArray(cfg.knownPortalIds)) errors.push('knownPortalIds must be an array');
   if (!cfg.theme?.name) errors.push('theme.name is required');
