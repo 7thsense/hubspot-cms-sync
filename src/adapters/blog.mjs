@@ -377,6 +377,10 @@ export async function push(
     registry,
     publish = false,
     limit,
+    // only: restrict the push to specific posts by file base name (no extension),
+    // e.g. ['blog__hello']. Enables a scoped sample push without touching the rest
+    // of the blog — used by verification harnesses; undefined means "all posts".
+    only,
     dryRun = false,
     hubFn = hub,
     // Injectable clock + sleep so the "wait past every scheduled publish" gate
@@ -409,6 +413,10 @@ export async function push(
     if (ext === 'md' || !byBase.has(base)) byBase.set(base, f);
   }
   let files = [...byBase.values()].sort();
+  if (only) {
+    const want = new Set(only);
+    files = files.filter((f) => want.has(f.replace(/\.(md|json)$/, '')));
+  }
   if (limit) files = files.slice(0, limit);
 
   // Group posts by their blogSlug and resolve each container exactly once. The
