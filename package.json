@@ -49,6 +49,7 @@
   },
   "dependencies": {
     "commander": "^14.0.3",
+    "js-yaml": "^4.2.0",
     "nunjucks": "^3.2.4"
   }
 }
