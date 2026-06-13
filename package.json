@@ -48,6 +48,7 @@
     "prepublishOnly": "npm test && npm run lint && npm pack --dry-run"
   },
   "dependencies": {
-    "commander": "^14.0.3"
+    "commander": "^14.0.3",
+    "nunjucks": "^3.2.4"
   }
 }
