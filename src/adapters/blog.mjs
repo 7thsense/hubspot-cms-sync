@@ -45,12 +45,14 @@ import {
   mkdirSync,
   readdirSync,
   existsSync,
+  rmSync,
 } from 'node:fs';
 import { join, resolve as resolvePath, basename, extname } from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { hub, getAll } from '../lib/hub.mjs';
 import { stableStringify } from '../lib/canonical.mjs';
+import { wireToFile, fileToWire } from '../lib/posts-format.mjs';
 import { resolve as resolveRefs, canonicalize as canonicalizeRefs } from '../lib/refs.mjs';
 import { resolveCtaEmbeds, loadInventory } from '../cta-inventory.mjs';
 
@@ -317,10 +319,13 @@ export async function pull(acct, { contentDir, registry }) {
       // (codex #7). It is content here, not a volatile timestamp to strip.
       publishDate: p.publishDate || null,
     };
-    writeFileSync(
-      join(postsOut, `${postFileFor(p.slug)}.json`),
-      stableStringify(portable),
-    );
+    // Canonical post format is frontmatter + HTML body (.md). Reshaping is lossless
+    // to the wire object (lib/posts-format.mjs round-trip), so the push payload is
+    // byte-identical to the old .json path. Drop any stale sibling .json from the
+    // pre-frontmatter format so push never sees the same post twice.
+    const base = join(postsOut, postFileFor(p.slug));
+    writeFileSync(`${base}.md`, wireToFile(portable));
+    if (existsSync(`${base}.json`)) rmSync(`${base}.json`);
     pulled++;
   }
 
@@ -393,12 +398,25 @@ export async function push(
   // then replaces @asset tokens below. (The old blog-local rehostAssets path is
   // retired: one upload location, no /blog-migrated vs /synced-assets split.)
 
-  let files = readdirSync(postsDir).filter((f) => f.endsWith('.json'));
-  files.sort();
+  // Accept the canonical frontmatter format (.md) and the legacy .json. If both
+  // exist for one post, .md wins; dedup by base name so a post is never pushed
+  // twice during the transition.
+  const byBase = new Map();
+  for (const f of readdirSync(postsDir)) {
+    const m = /^(.*)\.(md|json)$/.exec(f);
+    if (!m) continue;
+    const [, base, ext] = m;
+    if (ext === 'md' || !byBase.has(base)) byBase.set(base, f);
+  }
+  let files = [...byBase.values()].sort();
   if (limit) files = files.slice(0, limit);
 
-  // Group posts by their blogSlug and resolve each container exactly once.
-  const posts = files.map((f) => JSON.parse(readFileSync(join(postsDir, f), 'utf8')));
+  // Group posts by their blogSlug and resolve each container exactly once. The
+  // frontmatter codec yields the same wire object JSON.parse would have.
+  const posts = files.map((f) => {
+    const raw = readFileSync(join(postsDir, f), 'utf8');
+    return f.endsWith('.md') ? fileToWire(raw) : JSON.parse(raw);
+  });
   const containerCache = new Map();
   async function containerIdFor(blogSlug) {
     if (containerCache.has(blogSlug)) return containerCache.get(blogSlug);

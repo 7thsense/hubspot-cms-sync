@@ -24,6 +24,7 @@ import {
 } from '../../src/adapters/blog.mjs';
 import { matchBlogSlug } from '../../src/lib/hub.mjs';
 import { emptyRegistry, resolve as resolveRefs } from '../../src/lib/refs.mjs';
+import { fileToWire } from '../../src/lib/posts-format.mjs';
 
 // ── codex #5: query-string URL-rewrite fix ─────────────────────────────────────
 
@@ -418,7 +419,7 @@ test('pull from a dev-like account tokenizes hosted URLs — no literal URL land
     const res = await pull(acct, { contentDir: dir, registry });
     assert.equal(res.pulled, 1);
 
-    const onDisk = readFileSync(join(dir, 'blog', 'posts', 'blog__hello.json'), 'utf8');
+    const onDisk = readFileSync(join(dir, 'blog', 'posts', 'blog__hello.md'), 'utf8');
     // The committed bytes must carry NO literal hosted URL / portal id.
     assert.ok(!onDisk.includes('hubspotusercontent'), 'no literal hosted URL committed');
     assert.ok(!onDisk.includes(DEV), 'no literal per-account portal id committed');
@@ -426,7 +427,7 @@ test('pull from a dev-like account tokenizes hosted URLs — no literal URL land
     // codex #5: featuredImage + body query variants collapsed onto ONE token.
     assert.ok(!onDisk.includes('?width='), 'no dangling query string committed');
 
-    const post = JSON.parse(onDisk);
+    const post = fileToWire(onDisk);
     assert.equal(post.featuredImage, '@asset:Stock/hero.png');
     // The registry registered the asset path so the assets adapter rehosts it on push.
     assert.ok(registry.assets['Stock/hero.png'] != null, 'asset path registered for push');
@@ -467,7 +468,7 @@ test('pull is idempotent — a second pull produces byte-identical committed con
     };
     globalThis.fetch = fetchMock(routes);
     const acct = { name: 'dev', portalId: DEV, key: 'k' };
-    const file = join(dir, 'blog', 'posts', 'blog__hello.json');
+    const file = join(dir, 'blog', 'posts', 'blog__hello.md');
 
     await pull(acct, { contentDir: dir, registry: emptyRegistry(DEV) });
     const first = readFileSync(file, 'utf8');
