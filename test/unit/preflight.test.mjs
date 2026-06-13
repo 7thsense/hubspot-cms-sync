@@ -16,6 +16,7 @@ import {
   evaluateReadiness,
   gatherProbes,
   manifestBlogSlug,
+  sourceRepairability,
   renderReport,
   main,
   THEME_NAME,
@@ -97,6 +98,21 @@ test('evaluateReadiness: blog exists but templates are not the theme -> blog-tem
   assert.match(e.failures[0].detail, new RegExp(THEME_NAME));
 });
 
+test('evaluateReadiness: allowRepairable treats source-owned blog-template drift as non-blocking', () => {
+  const p = readyProbes();
+  p.blog.itemTemplatePath = '@marketplace/FastestThemes/Dark_free_Theme/templates/Blog-Post.html';
+  p.blog.listingTemplatePath = '@marketplace/FastestThemes/Dark_free_Theme/templates/Blog-Listing.html';
+  const e = evaluateReadiness(p, {
+    blogSlug: 'blog',
+    themeName: THEME_NAME,
+    allowRepairable: true,
+    repairable: { blogTemplates: true },
+  });
+  assert.equal(e.ready, true);
+  assert.deepEqual(e.failures, []);
+  assert.ok(e.checks.find((c) => c.id === 'blog-templates' && c.ok && c.repairable));
+});
+
 test('evaluateReadiness: only listing template wrong still fails blog-templates', () => {
   const p = readyProbes();
   p.blog.listingTemplatePath = '';
@@ -115,6 +131,19 @@ test('evaluateReadiness: no homepage at root slug -> homepage failure', () => {
   assert.equal(e.ready, false);
   assert.deepEqual(failIds(e), ['homepage']);
   assert.match(e.failures[0].remediation, /homepage/i);
+});
+
+test('evaluateReadiness: allowRepairable treats source-owned missing homepage as non-blocking', () => {
+  const p = readyProbes();
+  p.homepage = { ok: true, status: 200, found: false };
+  const e = evaluateReadiness(p, {
+    blogSlug: 'blog',
+    allowRepairable: true,
+    repairable: { homepage: true },
+  });
+  assert.equal(e.ready, true);
+  assert.deepEqual(e.failures, []);
+  assert.ok(e.checks.find((c) => c.id === 'homepage' && c.ok && c.repairable));
 });
 
 // ---------------- scopes ----------------
@@ -199,6 +228,19 @@ test('renderReport: lists blocking prerequisites when not ready', () => {
   assert.match(out, /NOT READY — 1 blocking prerequisite/);
 });
 
+test('renderReport: marks repairable checks as WARN while keeping readiness', () => {
+  const p = readyProbes();
+  p.homepage = { ok: true, status: 200, found: false };
+  const e = evaluateReadiness(p, {
+    blogSlug: 'blog',
+    allowRepairable: true,
+    repairable: { homepage: true },
+  });
+  const out = renderReport(e, { account: 'dev', portalId: '246389711', blogSlug: 'blog' });
+  assert.match(out, /\[WARN\] homepage/);
+  assert.match(out, /\nready$/);
+});
+
 // ---------------- manifestBlogSlug ----------------
 
 test('manifestBlogSlug: reads site.manifest.json blog.slug first', () => {
@@ -227,6 +269,35 @@ test('manifestBlogSlug: defaults to "blog" with no manifest/container', () => {
   const root = mkdtempSync(join(tmpdir(), 'pf-'));
   try {
     assert.equal(manifestBlogSlug(root), 'blog');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('sourceRepairability: detects committed blog templates and published homepage', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pf-src-'));
+  try {
+    mkdirSync(join(root, 'content', 'blog'), { recursive: true });
+    mkdirSync(join(root, 'content', 'pages'), { recursive: true });
+    writeFileSync(join(root, 'site.manifest.json'), JSON.stringify({
+      pages: [{ slug: '', desiredState: 'publish' }],
+      blog: { slug: 'blog' },
+    }));
+    writeFileSync(join(root, 'content', 'blog', 'container.json'), JSON.stringify({
+      slug: 'blog',
+      itemTemplatePath: `${THEME_NAME}/templates/blog-post.html`,
+      listingTemplatePath: `${THEME_NAME}/templates/blog.html`,
+    }));
+    writeFileSync(join(root, 'content', 'pages', 'home.json'), JSON.stringify({
+      slug: '',
+      desiredState: 'publish',
+      templatePath: `${THEME_NAME}/templates/home.html`,
+    }));
+
+    assert.deepEqual(sourceRepairability(root, { blogSlug: 'blog', themeName: THEME_NAME }), {
+      blogTemplates: true,
+      homepage: true,
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -1,0 +1,14 @@
+[
+  {
+    "name": "headline",
+    "label": "Headline",
+    "type": "text",
+    "default": "Ship HubSpot CMS from git"
+  },
+  {
+    "name": "form_id",
+    "label": "Contact form",
+    "type": "form",
+    "default": "@form:contact"
+  }
+]

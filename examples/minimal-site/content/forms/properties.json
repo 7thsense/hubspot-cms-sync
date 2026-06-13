@@ -1,0 +1,7 @@
+[
+  {
+    "name": "topic",
+    "label": "Inquiry topic",
+    "fieldType": "text"
+  }
+]

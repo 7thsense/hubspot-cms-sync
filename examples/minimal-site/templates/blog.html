@@ -1,0 +1,9 @@
+<!--
+  templateType: blog_listing
+  label: Example Blog Listing
+-->
+<main>
+  {% for content in contents %}
+    <article><a href="{{ content.absolute_url }}">{{ content.name }}</a></article>
+  {% endfor %}
+</main>

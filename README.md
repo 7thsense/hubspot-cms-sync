@@ -9,6 +9,11 @@ The tool reads account and site settings from `hubspot-cms-sync.config.mjs`,
 stores per-account identity in a gitignored `.sync-state/` directory, and
 refuses to write to configured read-only portal ids.
 
+See [`docs/CONTENT_LAYOUT.md`](docs/CONTENT_LAYOUT.md) for the repository
+layout, supported push surfaces, and a minimal example tree. A runnable fixture
+lives in [`examples/minimal-site/`](examples/minimal-site/) and is validated by
+the unit tests.
+
 ## Install
 
 ```bash
@@ -29,15 +34,16 @@ hcms pull dev
 hcms preflight dev
 hcms push dev --dry-run
 hcms push dev --publish
-hcms redirects dev --file content/redirects.csv
-hcms redirects dev --file content/redirects.csv --apply
+hcms redirects dev
+hcms redirects dev --apply
 hcms republish dev --all --blog
 hcms corpus
 hcms manifest validate
 ```
 
 `hcms redirects` is dry-run by default. Pass `--apply` to create or update
-HubSpot URL redirects from a repo-stored CSV or JSON spec. Managed redirects
+HubSpot URL redirects from the configured `redirectsFile`, or pass `--file` to
+use a specific repo-stored CSV or JSON spec. Managed redirects
 default to `301` and `isOnlyAfterNotFound: false`, so they can intentionally
 take precedence over an existing live HubSpot page during a cutover.
 

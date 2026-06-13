@@ -1,0 +1,9 @@
+{
+  "slug": "about",
+  "name": "About",
+  "htmlTitle": "About Example",
+  "metaDescription": "A minimal hcms about page.",
+  "language": "en",
+  "templatePath": "example-theme/templates/page.html",
+  "desiredState": "draft"
+}

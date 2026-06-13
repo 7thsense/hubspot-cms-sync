@@ -74,9 +74,12 @@ async function main(argv = process.argv) {
     .command('preflight')
     .description('check account readiness before a push')
     .argument('<account>')
-    .action(async (account) => {
+    .option('--allow-repairable', 'allow source-repairable portal drift before the push')
+    .action(async (account, options) => {
       const config = await withConfig(program.opts());
-      const code = await preflightMain([account], { config });
+      const args = [account];
+      if (options.allowRepairable) args.push('--allow-repairable');
+      const code = await preflightMain(args, { config });
       if (code) process.exitCode = code;
     });
 

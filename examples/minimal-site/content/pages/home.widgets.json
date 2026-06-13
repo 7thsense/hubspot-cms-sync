@@ -1,0 +1,17 @@
+{
+  "slug": "",
+  "widgets": {
+    "hero": {
+      "body": {
+        "headline": "Ship HubSpot CMS from git",
+        "image": "@asset:hero.svg",
+        "form_id": "@form:contact"
+      },
+      "name": "hero",
+      "type": "module",
+      "label": "Hero",
+      "css": {},
+      "child_css": {}
+    }
+  }
+}

@@ -86,6 +86,62 @@ export function manifestBlogSlug(repoRoot = REPO_ROOT) {
   return DEFAULT_BLOG_SLUG;
 }
 
+function readJsonIfPresent(path) {
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function containerFileFor(slug) {
+  if (slug === 'blog' || !slug) return 'container.json';
+  return `container.${String(slug).replace(/\//g, '__')}.json`;
+}
+
+function pointsAtTheme(path, themeName) {
+  const p = String(path || '');
+  return p.includes(`${themeName}/`) || p.includes(`${themeName}\\`);
+}
+
+/**
+ * Inspect the local repo to decide which portal drift can be repaired by a
+ * normal push. This never claims HubSpot-created prerequisites are repairable:
+ * the blog container itself, service-key scopes, and domain connection remain
+ * external setup.
+ */
+export function sourceRepairability(repoRoot = REPO_ROOT, opts = {}) {
+  const themeName = opts.themeName ?? THEME_NAME;
+  const blogSlug = opts.blogSlug ?? manifestBlogSlug(repoRoot);
+  const contentDir = opts.contentDirPath || join(repoRoot, 'content');
+  const manifestPath = opts.manifestFilePath || join(repoRoot, 'site.manifest.json');
+
+  const container = readJsonIfPresent(join(contentDir, 'blog', containerFileFor(blogSlug)));
+  const itemTemplate = container?.itemTemplatePath || opts.blogItemTemplate || '';
+  const listingTemplate = container?.listingTemplatePath || opts.blogListingTemplate || '';
+  const blogTemplates =
+    !!container &&
+    String(container.slug ?? blogSlug) === String(blogSlug) &&
+    pointsAtTheme(itemTemplate, themeName) &&
+    pointsAtTheme(listingTemplate, themeName);
+
+  const manifest = readJsonIfPresent(manifestPath);
+  const rootEntry = (manifest?.pages || []).find((p) => String(p?.slug ?? '') === '');
+  const home = readJsonIfPresent(join(contentDir, 'pages', 'home.json'));
+  const manifestPublishesRoot = !!rootEntry && (rootEntry.desiredState || 'publish') === 'publish';
+  const homePublishesRoot =
+    !!home &&
+    String(home.slug ?? '') === '' &&
+    (home.desiredState || rootEntry?.desiredState || 'publish') === 'publish' &&
+    !!home.templatePath;
+
+  return {
+    blogTemplates,
+    homepage: manifestPublishesRoot && homePublishesRoot,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // gatherProbes(acct, { blogSlug, hub, getAll, resolveBlogBySlug, resolvePageBySlug })
 //   -> probes object consumed by evaluateReadiness.
@@ -181,6 +237,8 @@ export async function gatherProbes(acct, opts = {}) {
 export function evaluateReadiness(probes, opts = {}) {
   const blogSlug = opts.blogSlug ?? probes.blogSlug ?? DEFAULT_BLOG_SLUG;
   const themeName = opts.themeName ?? THEME_NAME;
+  const allowRepairable = !!opts.allowRepairable;
+  const repairable = opts.repairable || {};
   const checks = [];
 
   const add = (c) => checks.push({ reportOnly: false, ...c });
@@ -212,11 +270,22 @@ export function evaluateReadiness(probes, opts = {}) {
     // Container exists — confirm it points at the theme's blog templates.
     const item = blog.itemTemplatePath || '';
     const listing = blog.listingTemplatePath || '';
-    const pointsAtTheme = (p) => p.includes(`${themeName}/`) || p.includes(`${themeName}\\`);
-    const itemOk = pointsAtTheme(item);
-    const listingOk = pointsAtTheme(listing);
+    const itemOk = pointsAtTheme(item, themeName);
+    const listingOk = pointsAtTheme(listing, themeName);
     if (itemOk && listingOk) {
       add({ id: 'blog-container', ok: true, detail: `blog "${blogSlug}" exists and uses ${themeName} templates` });
+    } else if (allowRepairable && repairable.blogTemplates) {
+      const wrong = [];
+      if (!itemOk) wrong.push(`post/item template "${item || '(unset)'}"`);
+      if (!listingOk) wrong.push(`listing template "${listing || '(unset)'}"`);
+      add({
+        id: 'blog-templates',
+        ok: true,
+        repairable: true,
+        detail:
+          `blog "${blogSlug}" exists but ${wrong.join(' and ')} not under ${themeName}; ` +
+          `source push will set the committed blog templates`,
+      });
     } else {
       const wrong = [];
       if (!itemOk) wrong.push(`post/item template "${item || '(unset)'}"`);
@@ -240,6 +309,13 @@ export function evaluateReadiness(probes, opts = {}) {
       ok: false,
       detail: `cannot list site pages (HTTP ${homepage.status}${homepage.message ? `: ${homepage.message}` : ''})`,
       remediation: `Grant the service key the "content" scope so the homepage can be confirmed.`,
+    });
+  } else if (!homepage.found && allowRepairable && repairable.homepage) {
+    add({
+      id: 'homepage',
+      ok: true,
+      repairable: true,
+      detail: `no site page resolves at the root slug ''; source push will create and publish the committed root page`,
     });
   } else if (!homepage.found) {
     add({
@@ -320,7 +396,7 @@ export function renderReport(evald, { account: acctName, portalId, blogSlug } = 
   const lines = [];
   lines.push(`Bootstrap preflight — account "${acctName}" (portal ${portalId}), blog slug "${blogSlug}"`);
   for (const c of evald.checks) {
-    const mark = c.ok ? 'PASS' : c.reportOnly ? 'NOTE' : 'FAIL';
+    const mark = c.repairable ? 'WARN' : c.ok ? 'PASS' : c.reportOnly ? 'NOTE' : 'FAIL';
     lines.push(`  [${mark}] ${c.id}: ${c.detail}`);
     if (!c.ok && c.remediation) lines.push(`         -> ${c.remediation}`);
   }
@@ -338,9 +414,11 @@ export function renderReport(evald, { account: acctName, portalId, blogSlug } = 
 // ---------------------------------------------------------------------------
 export async function main(argv = process.argv.slice(2), opts = {}) {
   const { config } = opts;
-  const acctName = argv[0];
+  const allowRepairable = argv.includes('--allow-repairable');
+  const args = argv.filter((a) => a !== '--allow-repairable');
+  const acctName = args[0];
   if (!acctName) {
-    process.stderr.write('usage: node sync/preflight.mjs <account>\n');
+    process.stderr.write('usage: node sync/preflight.mjs <account> [--allow-repairable]\n');
     return 2;
   }
 
@@ -371,7 +449,18 @@ export async function main(argv = process.argv.slice(2), opts = {}) {
     return 1;
   }
 
-  const evald = evaluateReadiness(probes, { blogSlug, themeName: config?.theme?.name || THEME_NAME });
+  const themeName = config?.theme?.name || THEME_NAME;
+  const repairable = allowRepairable
+    ? sourceRepairability(config?.root || REPO_ROOT, {
+        blogSlug,
+        themeName,
+        contentDirPath: config?.contentDirPath,
+        manifestFilePath: config?.manifestFilePath,
+        blogItemTemplate: config?.blog?.itemTemplate,
+        blogListingTemplate: config?.blog?.listingTemplate,
+      })
+    : {};
+  const evald = evaluateReadiness(probes, { blogSlug, themeName, allowRepairable, repairable });
   const report = renderReport(evald, { account: acctName, portalId: acct.portalId, blogSlug });
   process.stdout.write(report + '\n');
   return evald.ready ? 0 : 1;
@@ -382,4 +471,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   main().then((code) => process.exit(code));
 }
 
-export default { main, gatherProbes, evaluateReadiness, manifestBlogSlug, renderReport };
+export default { main, gatherProbes, evaluateReadiness, manifestBlogSlug, sourceRepairability, renderReport };

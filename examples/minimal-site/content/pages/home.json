@@ -1,0 +1,9 @@
+{
+  "slug": "",
+  "name": "Home",
+  "htmlTitle": "Example Home",
+  "metaDescription": "A minimal hcms homepage.",
+  "language": "en",
+  "templatePath": "example-theme/templates/home.html",
+  "desiredState": "publish"
+}

@@ -1,0 +1,10 @@
+{
+  "dev": {
+    "portalId": "123456",
+    "label": "example dev portal"
+  },
+  "prod": {
+    "portalId": "999999",
+    "label": "example production portal"
+  }
+}

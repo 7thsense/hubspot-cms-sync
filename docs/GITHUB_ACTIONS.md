@@ -54,7 +54,9 @@ The examples prefer this sequence for write-capable operations:
 3. `hcms preflight <target>`
 4. `hcms push <target> --dry-run`
 5. `hcms push <target> --publish`
-6. `the consuming repo verification commands`
+6. `hcms redirects <target>`
+7. `hcms redirects <target> --apply`
+8. `the consuming repo verification commands`
 
 For read-only CI, omit write steps and keep production credentials unavailable.
 

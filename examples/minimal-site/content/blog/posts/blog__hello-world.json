@@ -1,0 +1,13 @@
+{
+  "slug": "blog/hello-world",
+  "blogSlug": "blog",
+  "name": "Hello World",
+  "htmlTitle": "Hello World",
+  "publishDate": "2026-01-01T12:00:00.000Z",
+  "postBody": "<p>Hello from git.</p><img src=\"@asset:hero.svg\" alt=\"Example\">",
+  "postSummary": "<p>A minimal post.</p>",
+  "authorSlug": null,
+  "authorName": null,
+  "tagSlugs": [],
+  "tagNames": []
+}

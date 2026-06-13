@@ -1,0 +1,2 @@
+routePrefix,destination,redirectStyle,isOnlyAfterNotFound
+/old-about,/about,301,false

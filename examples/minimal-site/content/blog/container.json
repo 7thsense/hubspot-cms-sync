@@ -1,0 +1,6 @@
+{
+  "slug": "blog",
+  "name": "Example Blog",
+  "itemTemplatePath": "example-theme/templates/blog-post.html",
+  "listingTemplatePath": "example-theme/templates/blog.html"
+}

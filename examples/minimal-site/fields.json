@@ -1,0 +1,11 @@
+[
+  {
+    "name": "brand_color",
+    "label": "Brand color",
+    "type": "color",
+    "default": {
+      "color": "#2f6fed",
+      "opacity": 100
+    }
+  }
+]

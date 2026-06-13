@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">Example hero image</title>
+  <desc id="desc">A simple placeholder image for the minimal hcms site.</desc>
+  <rect width="1200" height="630" fill="#f5f7fb"/>
+  <rect x="96" y="96" width="1008" height="438" rx="24" fill="#ffffff" stroke="#d8dee9"/>
+  <circle cx="210" cy="220" r="58" fill="#1f7a8c"/>
+  <path d="M320 190h520v34H320zM320 252h420v28H320zM320 310h600v22H320zM320 352h480v22H320z" fill="#233142"/>
+  <path d="M160 430h220v58H160z" fill="#f25f5c"/>
+</svg>

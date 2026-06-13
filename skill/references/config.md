@@ -9,6 +9,7 @@ Key fields:
 - `contentDir`: local CMS content directory.
 - `syncStateDir`: local sync state directory; do not edit by hand.
 - `manifestPath`: path to `site.manifest.json`.
+- `redirectsFile`: optional CSV or JSON file for repo-managed URL redirects.
 - `readOnlyPortalIds`: portals that must never receive writes.
 - `knownPortalIds`: expected portal allowlist.
 - `assetHosts`: host canonicalization policy for HubSpot assets.
@@ -19,7 +20,10 @@ Key fields:
 - `verification`: base URL environment variable and repo-specific test commands.
 
 `site.manifest.json` is the deployment surface for theme, blog, forms, pages,
-and UI-gated operations. If the manifest and config disagree, stop and ask for
-the intended source of truth.
+and UI-gated operations. Redirects are managed separately through
+`redirectsFile`. If the manifest and config disagree, stop and ask for the
+intended source of truth.
 
 Use paths relative to the repo root unless the config explicitly says otherwise.
+See `docs/CONTENT_LAYOUT.md` for the expected repository layout and minimal
+sample tree.

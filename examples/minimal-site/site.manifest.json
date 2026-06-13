@@ -1,0 +1,29 @@
+{
+  "theme": {
+    "name": "example-theme"
+  },
+  "pages": [
+    {
+      "slug": "",
+      "templatePath": "example-theme/templates/home.html",
+      "desiredState": "publish"
+    },
+    {
+      "slug": "about",
+      "templatePath": "example-theme/templates/page.html",
+      "desiredState": "draft"
+    }
+  ],
+  "blog": {
+    "slug": "blog",
+    "itemTemplate": "example-theme/templates/blog-post.html",
+    "listingTemplate": "example-theme/templates/blog.html"
+  },
+  "forms": [
+    "contact"
+  ],
+  "uiGated": [
+    "blogContainerCreate",
+    "domainConnect"
+  ]
+}

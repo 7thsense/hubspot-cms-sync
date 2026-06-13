@@ -35,11 +35,15 @@ hcms corpus
 hcms preflight <target>
 hcms push <target> --dry-run
 hcms push <target> --publish
+hcms redirects <target>
+hcms redirects <target> --apply
 the consuming repo verification commands
 ```
 
 Stop before `push` if preflight or plan output indicates a read-only portal,
 unresolved dependency, missing credential, or unexpected destructive change.
+Run `hcms redirects` without `--apply` first when redirects are part of the
+deployment surface.
 
 ## Republish
 

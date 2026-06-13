@@ -1,0 +1,18 @@
+{
+  "key": "contact",
+  "name": "Website: Contact (general)",
+  "fields": [
+    {
+      "name": "firstname",
+      "label": "First name",
+      "fieldType": "text",
+      "required": false
+    },
+    {
+      "name": "email",
+      "label": "Work email",
+      "fieldType": "text",
+      "required": true
+    }
+  ]
+}
