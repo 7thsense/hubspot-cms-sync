@@ -11,28 +11,31 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
 import { loadSite } from '../src/lib/content-view.mjs';
-import { renderPost } from '../src/lib/render.mjs';
+import { renderPost, renderPage } from '../src/lib/render.mjs';
 
 const siteDir = resolve(process.argv[2] || '../7thsense-website');
-const wantSlug = process.argv[3] || 'blog/inverting-hubspot-cms-with-generative-ai';
 const outDir = resolve('dist');
+const baseUrl = 'https://www2.7thsense.io';
 
 const site = await loadSite(siteDir);
-const post = site.posts.find((p) => p.slug === wantSlug) || site.posts[0];
-if (!post) {
-  console.error('No posts found under', siteDir);
-  process.exit(1);
+
+async function emit(route, html) {
+  const rel = route === '/' ? 'index.html' : join(route.replace(/^\//, ''), 'index.html');
+  const outFile = join(outDir, rel);
+  await mkdir(dirname(outFile), { recursive: true });
+  await writeFile(outFile, html, 'utf8');
+  return outFile;
 }
 
-const html = renderPost(post, { siteDir, site, baseUrl: 'https://www.theseventhsense.com' });
+// One blog post (proves the post path).
+const post = site.posts.find((p) => p.slug === 'blog/inverting-hubspot-cms-with-generative-ai') || site.posts[0];
+const postHtml = renderPost(post, { siteDir, site, baseUrl });
+console.log(`post : ${post.route}  ->  ${await emit(post.route, postHtml)}  (${postHtml.length}b)`);
 
-// route "/blog/<slug>" -> dist/blog/<slug>/index.html
-const outFile = join(outDir, post.route.replace(/^\//, ''), 'index.html');
-await mkdir(dirname(outFile), { recursive: true });
-await writeFile(outFile, html, 'utf8');
-
-console.log(`Rendered: ${post.title}`);
-console.log(`  route:  ${post.route}`);
-console.log(`  author: ${post.author?.name ?? '(none)'}`);
-console.log(`  out:    ${outFile}`);
-console.log(`  bytes:  ${html.length}`);
+// The home page (proves the {% module %} path: 13 modules).
+const home = site.pages.find((p) => p.route === '/' || p.slug === '');
+if (home) {
+  const homeHtml = renderPage(home, { siteDir, site, baseUrl });
+  console.log(`page : ${home.route || '/'}  ->  ${await emit('/', homeHtml)}  (${homeHtml.length}b)`);
+  console.log(`       modules on page: ${Object.keys(home.modules).length}`);
+}

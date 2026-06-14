@@ -23,6 +23,7 @@
 
 import { readFile, readdir } from 'node:fs/promises';
 import { join, basename } from 'node:path';
+import { fileToWire } from './posts-format.mjs';
 
 // ---------------------------------------------------------------------------
 // Status vocabulary. HubSpot speaks `desiredState` (page) and `state` (post):
@@ -138,10 +139,19 @@ export async function loadPosts(contentDir) {
   const blogDir = join(contentDir, 'blog');
   const postsDir = join(blogDir, 'posts');
   const authorsByName = await loadAuthors(blogDir);
-  const files = (await readdir(postsDir)).filter((f) => f.endsWith('.json'));
+  // Posts may be frontmatter (.md, canonical) or legacy .json. Dedup by base name,
+  // preferring .md, so a half-migrated tree never yields a post twice.
+  const byBase = new Map();
+  for (const f of await readdir(postsDir)) {
+    const m = /^(.*)\.(md|json)$/.exec(f);
+    if (!m) continue;
+    if (m[2] === 'md' || !byBase.has(m[1])) byBase.set(m[1], f);
+  }
   const posts = [];
-  for (const f of files.sort()) {
-    posts.push(projectPost(await readJson(join(postsDir, f)), authorsByName));
+  for (const f of [...byBase.values()].sort()) {
+    const raw = await readFile(join(postsDir, f), 'utf8');
+    const wire = f.endsWith('.md') ? fileToWire(raw) : JSON.parse(raw);
+    posts.push(projectPost(wire, authorsByName));
   }
   posts.sort((a, b) => String(b.publishDate || '').localeCompare(String(a.publishDate || '')));
   return posts;

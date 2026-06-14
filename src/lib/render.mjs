@@ -35,11 +35,16 @@ import nunjucks from 'nunjucks';
 const SLICE_RE = /([A-Za-z_][\w.]*)\[(\d*):(\d*)\]/g;
 
 export function preprocessHubl(src) {
-  return src.replace(SLICE_RE, (_m, expr, a, b) => {
-    const start = a === '' ? '0' : a;
-    const end = b === '' ? 'null' : b;
-    return `${expr}|hubslice(${start},${end})`;
-  });
+  return src
+    // HubL's `{% module "name" path=... label=... %}` space-separates the name from
+    // its kwargs; Nunjucks' parseSignature wants a comma there. Insert one after the
+    // name literal so the remaining `key=value, ...` parses as keyword args.
+    .replace(/(\{%-?\s*module\s+(?:"[^"]*"|'[^']*'))\s+(?=[A-Za-z_])/g, '$1, ')
+    .replace(SLICE_RE, (_m, expr, a, b) => {
+      const start = a === '' ? '0' : a;
+      const end = b === '' ? 'null' : b;
+      return `${expr}|hubslice(${start},${end})`;
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -80,12 +85,29 @@ function assetUrl(path) {
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
+const MONTHS_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function localizeDate(iso) {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
+}
+
+// HubL's format_date(value, style). Mirrors HubSpot's en-US styles: medium uses an
+// abbreviated month ("Jun 6, 2026"), long/full the full month, short is numeric.
+// UTC so the build is deterministic regardless of the runner's timezone.
+function formatDate(value, style = 'medium') {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  const m = d.getUTCMonth();
+  const day = d.getUTCDate();
+  const y = d.getUTCFullYear();
+  if (style === 'short') return `${m + 1}/${day}/${String(y).slice(2)}`;
+  if (style === 'long' || style === 'full') return `${MONTHS[m]} ${day}, ${y}`;
+  return `${MONTHS_ABBR[m]} ${day}, ${y}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +123,7 @@ function postContent(post, { baseUrl = '', assetBase = '/assets' } = {}) {
     meta_description: post.metaDescription,
     post_body: resolveStaticRefs(post.body, { assetBase }),
     post_summary: resolveStaticRefs(post.summary, { assetBase }),
+    publish_date: post.publishDate,
     publish_date_localized: localizeDate(post.publishDate),
     featured_image: post.featuredImage ? resolveStaticRefs(post.featuredImage, { assetBase }) : '',
     featured_image_alt_text: post.featuredImageAlt,
@@ -108,6 +131,66 @@ function postContent(post, { baseUrl = '', assetBase = '/assets' } = {}) {
     blog_post_author: author ? { display_name: author.name, bio: resolveStaticRefs(author.bio, { assetBase }) } : null,
     absolute_url: baseUrl + post.route,
     canonical_url: baseUrl + post.route,
+  };
+}
+
+// Recursively resolve @asset refs inside any string value of a field tree.
+function resolveDeep(val, opts) {
+  if (typeof val === 'string') return resolveStaticRefs(val, opts);
+  if (Array.isArray(val)) return val.map((v) => resolveDeep(v, opts));
+  if (val && typeof val === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(val)) out[k] = resolveDeep(v, opts);
+    return out;
+  }
+  return val;
+}
+
+// fields.json -> { fieldName: default }. A group field (with `children`) yields a
+// nested object of its children's defaults; leaf fields yield their `default`.
+function moduleFieldDefaults(fields) {
+  const out = {};
+  if (!Array.isArray(fields)) return out;
+  for (const f of fields) {
+    if (!f || !f.name) continue;
+    if (Array.isArray(f.children) && f.children.length) out[f.name] = moduleFieldDefaults(f.children);
+    else if ('default' in f) out[f.name] = f.default;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// {% module "name" path="../modules/x.module" label="..." field=val %} — HubL's
+// module instantiation tag. HubSpot renders the module's module.html with a
+// `module` variable whose fields resolve by precedence: fields.json defaults <
+// inline template args < the page's stored widget body (content-view's modules map,
+// passed in context as __page_modules). The module bytes are read relative to the
+// theme root (path's leading ../ stripped). Returns SafeString (no double-escape).
+// ---------------------------------------------------------------------------
+function ModuleExtension(env, siteDir, opts) {
+  this.tags = ['module'];
+  this.parse = function parse(parser, nodes) {
+    const tok = parser.nextToken();
+    const args = parser.parseSignature(null, true);
+    parser.advanceAfterBlockEnd(tok.value);
+    return new nodes.CallExtension(this, 'run', args);
+  };
+  this.run = function run(context, name, kwargs) {
+    kwargs = kwargs && kwargs.__keywords ? kwargs : {};
+    const { path = '', label: _label, ...inlineFields } = kwargs;
+    const modDir = join(siteDir, String(path).replace(/^(\.\.\/)+/, ''));
+    let defaults = {};
+    try {
+      defaults = moduleFieldDefaults(JSON.parse(readFileSync(join(modDir, 'fields.json'), 'utf8')));
+    } catch {
+      /* a module may ship no fields.json */
+    }
+    const pageVals = (context.lookup('__page_modules') || {})[name] || {};
+    const merged = { ...defaults, ...inlineFields, ...pageVals };
+    const html = env.renderString(preprocessHubl(readFileSync(join(modDir, 'module.html'), 'utf8')), {
+      module: resolveDeep(merged, opts),
+    });
+    return new nunjucks.runtime.SafeString(html);
   };
 }
 
@@ -120,6 +203,7 @@ function makeEnv(siteDir, { site, opts }) {
 
   env.addFilter('hubslice', (str, start, end) =>
     end === null || end === undefined ? String(str ?? '').slice(start) : String(str ?? '').slice(start, end));
+  env.addFilter('format_date', formatDate);
 
   env.addGlobal('get_asset_url', assetUrl);
   env.addGlobal('html_lang', opts.lang || 'en');
@@ -131,6 +215,8 @@ function makeEnv(siteDir, { site, opts }) {
   // build-time neutral corpus, newest-first, projected to content shims.
   env.addGlobal('blog_recent_posts', (_group, count) =>
     (site?.posts || []).slice(0, count || 5).map((p) => postContent(p, opts)));
+
+  env.addExtension('ModuleExtension', new ModuleExtension(env, siteDir, opts));
 
   return env;
 }
@@ -150,4 +236,35 @@ export function renderPost(post, { siteDir, site, baseUrl = '', assetBase = '/as
   return env.render(template, context);
 }
 
-export { postContent, assetUrl, localizeDate, makeEnv };
+// ---------------------------------------------------------------------------
+// Neutral page view -> HubL `content` shim. Pages reference content.* far less
+// than posts (most copy lives in modules), but templates use name/title/meta and
+// the canonical/absolute URL for SEO + social tags.
+// ---------------------------------------------------------------------------
+function pageContent(page, { baseUrl = '' } = {}) {
+  return {
+    name: page.title,
+    html_title: page.htmlTitle,
+    meta_description: page.metaDescription,
+    absolute_url: baseUrl + page.route,
+    canonical_url: baseUrl + page.route,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Public: render one neutral page view (with its module map) to an HTML string.
+// ---------------------------------------------------------------------------
+export function renderPage(page, { siteDir, site, baseUrl = '', assetBase = '/assets', lang = 'en',
+  headerIncludes = '', footerIncludes = '' } = {}) {
+  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes };
+  const env = makeEnv(siteDir, { site, opts });
+  const context = {
+    content: pageContent(page, opts),
+    __page_modules: page.modules || {},
+    nav_active: null,
+    nav_hide_cta: false,
+  };
+  return env.render(page.template, context);
+}
+
+export { postContent, pageContent, assetUrl, localizeDate, makeEnv };
