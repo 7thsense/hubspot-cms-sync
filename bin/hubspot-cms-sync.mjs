@@ -10,6 +10,8 @@ import { main as preflightMain } from '../src/preflight.mjs';
 import { main as republishMain } from '../src/republish.mjs';
 import { main as manifestMain } from '../src/manifest.mjs';
 import { renderRedirectReport, syncRedirects } from '../src/redirects.mjs';
+import { buildStatic } from '../src/build-static.mjs';
+import { resolve as resolvePath } from 'node:path';
 
 function runNodeScript(script, args, { cwd }) {
   return new Promise((resolve) => {
@@ -43,6 +45,27 @@ async function main(argv = process.argv) {
       console.log(`redirects: ${config.redirectsFilePath || '(none)'}`);
       console.log(`sync state: ${config.syncStateDirPath}`);
       console.log(`theme: ${config.theme.name}`);
+    });
+
+  program
+    .command('build')
+    .description('render the canonical site to a static directory (static target)')
+    .option('--out <dir>', 'output directory', 'dist')
+    .option('--base-url <url>', 'absolute base URL for canonical/og links', '')
+    .option('--tracking-portal <id>', 'HubSpot tracking-script portal id (keeps forms de-anonymizing)')
+    .action(async (options) => {
+      const config = await withConfig(program.opts());
+      const summary = await buildStatic({
+        siteDir: config.root,
+        outDir: resolvePath(config.root, options.out),
+        baseUrl: options.baseUrl,
+        trackingPortalId: options.trackingPortal,
+      });
+      console.log(`built static site -> ${options.out}`);
+      console.log(
+        `  pages: ${summary.pages} | posts: ${summary.posts} | tag pages: ${summary.tags} | `
+        + `html files: ${summary.files} | redirects: ${summary.redirects}`,
+      );
     });
 
   program

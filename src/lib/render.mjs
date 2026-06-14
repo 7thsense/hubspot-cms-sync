@@ -77,6 +77,22 @@ export function resolveStaticRefs(value, { assetBase = '/assets' } = {}) {
   return String(value).replace(/@asset:([^\s"'<>)]+)/g, (_m, nameRef) => `${assetBase}/${nameRef}`);
 }
 
+// HubSpot evaluates HubL functions embedded in rich-text bodies at render time; the
+// static target passes bodies through as data, so any such macro must be resolved
+// here. Currently the only one in the corpus is a Wistia video embed,
+// `{{ script_embed('wistia', '<id>', ...) }}` -> Wistia's responsive inline embed.
+const WISTIA_EMBED_RE = /\{\{\s*script_embed\(\s*['"]wistia['"]\s*,\s*['"]([A-Za-z0-9]+)['"][^}]*\)\s*\}\}/gi;
+export function resolveHublEmbeds(value) {
+  if (value == null) return value;
+  return String(value).replace(WISTIA_EMBED_RE, (_m, id) =>
+    `<script src="https://fast.wistia.com/embed/medias/${id}.jsonp" async></script>`
+    + '<script src="https://fast.wistia.com/assets/external/E-v1.js" async></script>'
+    + '<div class="wistia_responsive_padding" style="padding:56.25% 0 0 0;position:relative;">'
+    + '<div class="wistia_responsive_wrapper" style="height:100%;left:0;position:absolute;top:0;width:100%;">'
+    + `<div class="wistia_embed wistia_async_${id} videoFoam=true" style="height:100%;position:relative;width:100%;">&nbsp;</div>`
+    + '</div></div>');
+}
+
 // get_asset_url('../css/main.css') -> "/css/main.css". Theme assets live at the
 // repo root (css/ js/ images/); HubL refs them template-relative with leading ../.
 function assetUrl(path) {
@@ -93,6 +109,11 @@ function localizeDate(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
+}
+
+// Fallback tag slug when no authoritative tags.json mapping is supplied.
+export function slugify(s) {
+  return String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
 // HubL's format_date(value, style). Mirrors HubSpot's en-US styles: medium uses an
@@ -115,19 +136,20 @@ function formatDate(value, style = 'medium') {
 // static target). Reused for the page being rendered AND for related-post cards
 // returned by blog_recent_posts().
 // ---------------------------------------------------------------------------
-function postContent(post, { baseUrl = '', assetBase = '/assets' } = {}) {
+function postContent(post, { baseUrl = '', assetBase = '/assets', tagSlugFor } = {}) {
   const author = post.author || null;
+  const tagSlug = tagSlugFor || slugify;
   return {
     name: post.title,
     html_title: post.htmlTitle,
     meta_description: post.metaDescription,
-    post_body: resolveStaticRefs(post.body, { assetBase }),
-    post_summary: resolveStaticRefs(post.summary, { assetBase }),
+    post_body: resolveHublEmbeds(resolveStaticRefs(post.body, { assetBase })),
+    post_summary: resolveHublEmbeds(resolveStaticRefs(post.summary, { assetBase })),
     publish_date: post.publishDate,
     publish_date_localized: localizeDate(post.publishDate),
     featured_image: post.featuredImage ? resolveStaticRefs(post.featuredImage, { assetBase }) : '',
     featured_image_alt_text: post.featuredImageAlt,
-    tag_list: post.tags.map((t) => ({ name: t })),
+    tag_list: post.tags.map((t) => ({ name: t, slug: tagSlug(t) })),
     blog_post_author: author ? { display_name: author.name, bio: resolveStaticRefs(author.bio, { assetBase }) } : null,
     absolute_url: baseUrl + post.route,
     canonical_url: baseUrl + post.route,
@@ -265,6 +287,27 @@ export function renderPage(page, { siteDir, site, baseUrl = '', assetBase = '/as
     nav_hide_cta: false,
   };
   return env.render(page.template, context);
+}
+
+// ---------------------------------------------------------------------------
+// Public: render the blog LISTING (templates/blog.html) for a set of posts —
+// the main /blog index or a /blog/tag/<slug> page. HubSpot exposes the page's
+// posts as `contents` (a list of content objects) plus pagination vars; we pass
+// all posts on one page (no pagination), so the template's paginate block (guarded
+// by contents.total_page_count > 1) is inert.
+// ---------------------------------------------------------------------------
+export function renderBlogListing(posts, { siteDir, site, baseUrl = '', assetBase = '/assets', lang = 'en',
+  headerIncludes = '', footerIncludes = '', tagSlugFor, route = '/blog' } = {}) {
+  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, tagSlugFor };
+  const env = makeEnv(siteDir, { site, opts });
+  const context = {
+    contents: posts.map((p) => postContent(p, opts)),
+    content: { absolute_url: baseUrl + route, canonical_url: baseUrl + route },
+    current_page_num: 1,
+    nav_active: null,
+    nav_hide_cta: false,
+  };
+  return env.render('templates/blog.html', context);
 }
 
 export { postContent, pageContent, assetUrl, localizeDate, makeEnv };
