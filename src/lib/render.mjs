@@ -228,6 +228,12 @@ function makeEnv(siteDir, { site, opts }) {
   env.addFilter('format_date', formatDate);
 
   env.addGlobal('get_asset_url', assetUrl);
+  // Absolute site origin from the build's baseUrl (e.g. https://www2.7thsense.io).
+  // Templates need it for absolute URLs that relative paths can't satisfy —
+  // og:image/twitter:image especially, which social scrapers reject when relative.
+  // Empty string on the HubSpot target (where baseUrl is unset), so a template
+  // that does `base_url ~ '/assets/x'` yields a root-relative path there.
+  env.addGlobal('base_url', opts.baseUrl || '');
   env.addGlobal('html_lang', opts.lang || 'en');
   env.addGlobal('html_lang_dir', '');
   env.addGlobal('standard_header_includes', opts.headerIncludes || '');
