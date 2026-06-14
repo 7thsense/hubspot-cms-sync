@@ -41,7 +41,7 @@ async function loadTagSlugs(siteDir) {
  * trackingPortalId, if set, injects the HubSpot tracking script into the footer so
  * forms keep de-anonymizing (`standard_footer_includes`). Returns counts.
  */
-export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '/assets', trackingPortalId, blogPageSize = 20 } = {}) {
+export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '/assets', trackingPortalId, blogPageSize = 10 } = {}) {
   const tagMap = await loadTagSlugs(siteDir);
   const tagSlugFor = (name) => tagMap[name] || slugify(name);
   const footerIncludes = trackingPortalId
