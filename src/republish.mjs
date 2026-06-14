@@ -73,10 +73,17 @@ async function republish(argv = process.argv.slice(2), opts = {}) {
   const fut = future();
   let ok = 0;
   let fail = 0;
+  let skipped = 0;
   async function schedule(kind, id, publishDate) {
     const body = { id: String(id), publishDate: publishDate || fut };
     const { status } = await hub('POST', `/cms/v3/${kind}/schedule`, body);
-    status === 204 ? ok++ : (fail++, console.error(`  ${kind} ${id} -> ${status}`));
+    // 409 = the page already has a scheduled publish (e.g. just published by a
+    // `push --publish`, or an orphan portal page) — the desired end state, not a
+    // failure. `--all` legitimately touches pages outside our manifest; don't let
+    // their conflicts fail the deploy. Log for visibility.
+    if (status === 204) ok++;
+    else if (status === 409) { skipped++; console.error(`  ${kind} ${id} -> 409 already scheduled (skip)`); }
+    else { fail++; console.error(`  ${kind} ${id} -> ${status}`); }
   }
 
   const pages = await getAll('/cms/v3/pages/site-pages?property=id,slug,state');
@@ -91,7 +98,7 @@ async function republish(argv = process.argv.slice(2), opts = {}) {
     console.log(`republishing ${posts.length} blog post(s) (preserving publishDate)`);
     for (const p of posts) await schedule('blogs/posts', p.id, p.publishDate);
   }
-  console.log(`scheduled ${ok} | failed ${fail} (live in ~90s)`);
+  console.log(`scheduled ${ok} | already-scheduled ${skipped} | failed ${fail} (live in ~90s)`);
   return fail ? 1 : 0;
 }
 
