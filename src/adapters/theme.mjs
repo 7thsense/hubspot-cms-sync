@@ -95,7 +95,12 @@ const REF_BEARING = (relPath) => {
   return (
     p === 'js/hs-forms.js' ||
     p.endsWith('.module/fields.json') ||
-    p.endsWith('.module/module.html')
+    p.endsWith('.module/module.html') ||
+    // Page templates (incl. shared partials) may carry @asset refs to content
+    // assets (e.g. og:image, founder/product photos). Resolve them to the
+    // target's hosted URL on push, same as module.html — keeps content images
+    // (webp included, which the theme source rejects) out of the theme tree.
+    (p.startsWith('templates/') && p.endsWith('.html'))
   );
 };
 

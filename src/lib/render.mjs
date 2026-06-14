@@ -261,7 +261,10 @@ export function renderPost(post, { siteDir, site, baseUrl = '', assetBase = '/as
     nav_active: null,
     nav_hide_cta: false,
   };
-  return env.render(template, context);
+  // Resolve @asset refs that live in the TEMPLATE itself (not just content fields) —
+  // e.g. og:image or img src pointing at content assets. Idempotent: already-resolved
+  // content has no @asset tokens left.
+  return resolveStaticRefs(env.render(template, context), { assetBase });
 }
 
 // ---------------------------------------------------------------------------
@@ -292,7 +295,7 @@ export function renderPage(page, { siteDir, site, baseUrl = '', assetBase = '/as
     nav_active: null,
     nav_hide_cta: false,
   };
-  return env.render(page.template, context);
+  return resolveStaticRefs(env.render(page.template, context), { assetBase });
 }
 
 // ---------------------------------------------------------------------------
@@ -313,7 +316,7 @@ export function renderBlogListing(posts, { siteDir, site, baseUrl = '', assetBas
     nav_active: null,
     nav_hide_cta: false,
   };
-  return env.render('templates/blog.html', context);
+  return resolveStaticRefs(env.render('templates/blog.html', context), { assetBase });
 }
 
 export { postContent, pageContent, assetUrl, localizeDate, makeEnv };
