@@ -41,7 +41,7 @@ async function loadTagSlugs(siteDir) {
  * trackingPortalId, if set, injects the HubSpot tracking script into the footer so
  * forms keep de-anonymizing (`standard_footer_includes`). Returns counts.
  */
-export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '/assets', trackingPortalId } = {}) {
+export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '/assets', trackingPortalId, blogPageSize = 20 } = {}) {
   const tagMap = await loadTagSlugs(siteDir);
   const tagSlugFor = (name) => tagMap[name] || slugify(name);
   const footerIncludes = trackingPortalId
@@ -76,7 +76,17 @@ export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '
     fileCount++;
   }
 
-  await emit('/blog', renderBlogListing(posts, { ...opts, route: '/blog' }));
+  // Paginate listings to match HubSpot (20 posts/page; page 1 = base, page N = base/page/N).
+  // Without this the static listing renders every post on one page.
+  async function emitListing(basePath, items) {
+    const totalPages = Math.max(1, Math.ceil(items.length / blogPageSize));
+    for (let pageNum = 1; pageNum <= totalPages; pageNum += 1) {
+      const route = pageNum === 1 ? basePath : `${basePath}/page/${pageNum}`;
+      await emit(route, renderBlogListing(items, { ...opts, route, basePath, pageNum, pageSize: blogPageSize }));
+    }
+  }
+
+  await emitListing('/blog', posts);
 
   // One listing per tag, posts grouped by tag slug (preserves newest-first order).
   const byTag = new Map();
@@ -88,7 +98,7 @@ export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '
     }
   }
   for (const [slug, tagPosts] of byTag) {
-    await emit(`/blog/tag/${slug}`, renderBlogListing(tagPosts, { ...opts, route: `/blog/tag/${slug}` }));
+    await emitListing(`/blog/tag/${slug}`, tagPosts);
   }
 
   // Assets. get_asset_url maps ../css|js|images -> /css|js|images; @asset:<p> -> /assets/<p>.

@@ -306,13 +306,23 @@ export function renderPage(page, { siteDir, site, baseUrl = '', assetBase = '/as
 // by contents.total_page_count > 1) is inert.
 // ---------------------------------------------------------------------------
 export function renderBlogListing(posts, { siteDir, site, baseUrl = '', assetBase = '/assets', lang = 'en',
-  headerIncludes = '', footerIncludes = '', tagSlugFor, route = '/blog' } = {}) {
+  headerIncludes = '', footerIncludes = '', tagSlugFor, route = '/blog',
+  basePath = null, pageNum = 1, pageSize = 0 } = {}) {
   const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, tagSlugFor };
   const env = makeEnv(siteDir, { site, opts });
+  // Pagination: pageSize <= 0 keeps the whole list on one page (back-compat). Otherwise
+  // slice to the page window. blog_page_link mirrors HubSpot — page 1 is the listing
+  // base (e.g. /blog), page N is <base>/page/N — and drives the template's paginator.
+  const base = basePath || route;
+  const totalPages = pageSize > 0 ? Math.max(1, Math.ceil(posts.length / pageSize)) : 1;
+  const pageItems = pageSize > 0 ? posts.slice((pageNum - 1) * pageSize, pageNum * pageSize) : posts;
+  env.addGlobal('blog_page_link', (n) => (Number(n) <= 1 ? base : `${base}/page/${n}`));
+  const contents = pageItems.map((p) => postContent(p, opts));
+  contents.total_page_count = totalPages;
   const context = {
-    contents: posts.map((p) => postContent(p, opts)),
+    contents,
     content: { absolute_url: baseUrl + route, canonical_url: baseUrl + route },
-    current_page_num: 1,
+    current_page_num: pageNum,
     nav_active: null,
     nav_hide_cta: false,
   };
