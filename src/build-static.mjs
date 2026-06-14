@@ -65,6 +65,17 @@ export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '
   for (const page of pages) await emit(page.route, renderPage(page, opts));
   for (const post of posts) await emit(post.route, renderPost(post, opts));
 
+  // Cloudflare Pages serves /404.html for any unmatched route; without it, an unknown
+  // path falls back to index.html. Render it flat at the output root.
+  if (existsSync(join(siteDir, 'templates/404.html'))) {
+    const html = renderPage(
+      { template: 'templates/404.html', route: '/404', title: 'Page not found', htmlTitle: 'Page not found', metaDescription: '', modules: {} },
+      opts,
+    );
+    await writeFile(join(outDir, '404.html'), html, 'utf8');
+    fileCount++;
+  }
+
   await emit('/blog', renderBlogListing(posts, { ...opts, route: '/blog' }));
 
   // One listing per tag, posts grouped by tag slug (preserves newest-first order).
