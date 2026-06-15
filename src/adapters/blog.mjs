@@ -283,6 +283,14 @@ export async function pull(acct, { contentDir, registry }) {
   }
   delete registry.__rev_assets;
 
+  // Authors are content: write the canonical, account-portable authors.json (bio +
+  // profile + @asset-tokenized avatar), sorted by slug for a stable diff. push reads
+  // this back, so a bio edited in git reaches HubSpot (and vice-versa).
+  const portableAuthors = authors
+    .map((a) => projectAuthor(a, assetMap, registry, ctaCtx))
+    .sort((x, y) => String(x.slug || '').localeCompare(String(y.slug || '')));
+  writeFileSync(authorsFile(dir), stableStringify(portableAuthors));
+
   let pulled = 0;
   for (const p of posts) {
     const container = blogById.get(String(p.contentGroupId));
@@ -350,6 +358,81 @@ export async function pull(acct, { contentDir, registry }) {
 function canonUrl(u) {
   if (!u) return u || '';
   return String(u);
+}
+
+// ── AUTHORS (bidirectional: content/blog/authors.json <-> HubSpot blog authors) ──
+//
+// Blog authors are CONTENT: their bio + profile render in author cards and the
+// per-post byline. authors.json is the canonical, account-portable store — the
+// mirror of a page's widgets, for the blog. pull() writes it from the account's
+// authors; push() reads it and PATCHes each author's editable profile so the bio in
+// git reaches HubSpot (an author the sandbox seeded with an empty bio was the
+// spf-dkim fidelity divergence). Without this, ensureAuthor only ever set name+slug
+// on CREATE, so bios silently never synced.
+
+function authorsFile(dir) {
+  return join(dir, 'authors.json');
+}
+
+// HubSpot read-only / per-account / volatile author fields — never committed (they
+// would churn the diff and are not portable). Everything else (bio, social, email,
+// avatar, names, language) is canonical content.
+const AUTHOR_DROP = new Set(['id', 'created', 'updated', 'deletedAt']);
+
+// The editable profile fields push writes onto a HubSpot author. avatar is handled
+// separately (it carries an @asset token that must resolve on the target).
+const AUTHOR_PROFILE_FIELDS = ['bio', 'fullName', 'email', 'facebook', 'linkedin', 'twitter', 'website'];
+
+// Project a raw HubSpot author to its canonical, committed shape (drop volatile
+// fields; tokenize the avatar URL to @asset where the bytes are in the blog asset
+// manifest, exactly like featuredImage). Used on pull.
+function projectAuthor(a, assetMap, registry, ctaCtx) {
+  const out = {};
+  for (const [k, v] of Object.entries(a)) {
+    if (!AUTHOR_DROP.has(k)) out[k] = v;
+  }
+  if (typeof out.avatar === 'string' && out.avatar) {
+    out.avatar = canonicalizeField(canonUrl(out.avatar), assetMap, registry, ctaCtx);
+  }
+  return out;
+}
+
+// Load authors.json into a lookup keyed by BOTH slug and displayName (lowercased),
+// so push can match the author a post references however it was keyed.
+function loadAuthorProfiles(dir) {
+  const f = authorsFile(dir);
+  const byKey = new Map();
+  if (!existsSync(f)) return byKey;
+  let list;
+  try {
+    list = JSON.parse(readFileSync(f, 'utf8'));
+  } catch {
+    return byKey;
+  }
+  for (const a of Array.isArray(list) ? list : []) {
+    for (const k of [a.slug, a.displayName, a.fullName, a.name]) {
+      if (k) byKey.set(String(k).toLowerCase(), a);
+    }
+  }
+  return byKey;
+}
+
+// Build the PATCH body for a HubSpot author from its canonical profile. avatar is
+// resolved (@asset -> target URL) DEFENSIVELY: if the asset isn't on the target,
+// leave HubSpot's current avatar rather than hard-failing the whole blog push.
+function authorPatchBody(profile, registry) {
+  const body = {};
+  for (const k of AUTHOR_PROFILE_FIELDS) {
+    if (profile[k] != null) body[k] = profile[k];
+  }
+  if (typeof profile.avatar === 'string' && profile.avatar) {
+    try {
+      body.avatar = resolveRefs(profile.avatar, registry);
+    } catch {
+      /* avatar bytes not on the target account — keep the existing avatar */
+    }
+  }
+  return body;
 }
 
 // ── PUSH ─────────────────────────────────────────────────────────────────────
@@ -450,6 +533,10 @@ export async function push(
   }
 
   const authorCache = await nameIndex(hubFn, acct, '/cms/v3/blogs/authors', ['slug', 'displayName']);
+  // Canonical author profiles (bio + social + avatar) keyed by slug/displayName, and
+  // a per-run set so each author's profile is PATCHed at most once (not per post).
+  const authorProfiles = loadAuthorProfiles(dir);
+  const patchedAuthors = new Set();
   const tagCache = await nameIndex(hubFn, acct, '/cms/v3/blogs/tags', ['slug', 'name']);
   const existing = new Map(
     (await getAllVia(hubFn, acct, '/cms/v3/blogs/posts')).map((p) => [p.slug, String(p.id)]),
@@ -471,7 +558,12 @@ export async function push(
   for (const p of posts) {
     try {
       const contentGroupId = await containerIdFor(p.blogSlug);
-      const blogAuthorId = await ensureAuthor(acct, p, authorCache, hubFn);
+      const blogAuthorId = await ensureAuthor(acct, p, authorCache, hubFn, {
+        profiles: authorProfiles,
+        registry,
+        dryRun,
+        patched: patchedAuthors,
+      });
       const tagIds = [];
       for (const t of postTagPairs(p)) {
         tagIds.push(await ensureTag(acct, t, tagCache, hubFn));
@@ -787,21 +879,50 @@ async function nameIndex(hubFn, acct, path, keys) {
   return idx;
 }
 
-async function ensureAuthor(acct, post, cache, hubFn) {
+// Resolve (or create) the HubSpot author for a post, then SYNC its canonical profile
+// (bio + social + avatar) from authors.json so a bio edited in git reaches HubSpot.
+// opts: { profiles, registry, dryRun, patched }. The profile PATCH runs at most once
+// per author per push (patched set) and never during dryRun (no preflight writes).
+async function ensureAuthor(acct, post, cache, hubFn, opts = {}) {
+  const { profiles, registry, dryRun = false, patched } = opts;
   const slug = post.authorSlug;
   const display = post.authorName;
   if (!slug && !display) return null;
+
+  const profile = profiles && (profiles.get(String(slug || '').toLowerCase())
+    || profiles.get(String(display || '').toLowerCase()));
+
+  let id = null;
   for (const k of [slug, display]) {
-    if (k && cache.has(String(k).toLowerCase())) return cache.get(String(k).toLowerCase());
+    if (k && cache.has(String(k).toLowerCase())) { id = cache.get(String(k).toLowerCase()); break; }
   }
-  const j = await hubOk(hubFn, acct, 'POST', '/cms/v3/blogs/authors', {
-    displayName: display || slug,
-    fullName: display || slug,
-    slug: slug || undefined,
-  });
-  const id = String(j.id);
-  if (slug) cache.set(String(slug).toLowerCase(), id);
-  if (display) cache.set(String(display).toLowerCase(), id);
+
+  if (!id) {
+    // CREATE with the full canonical profile (bio + social) so a new author lands
+    // complete, not as a name-only stub.
+    const j = await hubOk(hubFn, acct, 'POST', '/cms/v3/blogs/authors', {
+      displayName: display || slug,
+      fullName: (profile && profile.fullName) || display || slug,
+      slug: slug || undefined,
+      ...(profile ? authorPatchBody(profile, registry) : {}),
+    });
+    id = String(j.id);
+    if (slug) cache.set(String(slug).toLowerCase(), id);
+    if (display) cache.set(String(display).toLowerCase(), id);
+    if (patched) patched.add(id);
+    return id;
+  }
+
+  // EXISTING author: PATCH its editable profile to match the canonical authors.json
+  // (this is what the old code skipped — bios never updated). Once per author, never
+  // in dryRun.
+  if (profile && !dryRun && !(patched && patched.has(id))) {
+    const body = authorPatchBody(profile, registry);
+    if (Object.keys(body).length) {
+      await hubOk(hubFn, acct, 'PATCH', `/cms/v3/blogs/authors/${id}`, body);
+    }
+    if (patched) patched.add(id);
+  }
   return id;
 }
 

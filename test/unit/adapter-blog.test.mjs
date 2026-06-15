@@ -838,3 +838,121 @@ test('push (publish) runs the FINAL date-restore ONLY after the latest schedule 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── authors: bidirectional bio/profile sync (content/blog/authors.json) ──────────
+
+test('pull writes canonical authors.json: drops volatile fields, tokenizes avatar, sorts by slug', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'blogauth-pull-'));
+  const prevFetch = globalThis.fetch;
+  try {
+    const avatar = `https://${DEV}.fs1.hubspotusercontent-na1.net/hubfs/${DEV}/authors/mike.jpg`;
+    const routes = (path) => {
+      if (path.startsWith('/content/api/v2/blogs')) {
+        return { objects: [{ id: '111', slug: 'blog', name: 'Seventh Sense Blog', item_template_path: '', listing_template_path: '' }] };
+      }
+      if (path.startsWith('/cms/v3/blogs/authors')) {
+        return { results: [
+          // Out of slug order on purpose -> pull must sort by slug.
+          { id: 'a2', slug: 'mike-donnelly', displayName: 'Mike Donnelly', fullName: 'Mike Donnelly', bio: 'Founder and CEO - Seventh Sense', avatar, created: '2017-01-01T00:00:00Z', updated: '2018-01-01T00:00:00Z', deletedAt: '1970-01-01T00:00:00Z' },
+          { id: 'a1', slug: 'alyssa-crabbe', displayName: 'Alyssa Crabbe', bio: '', avatar: '' },
+        ] };
+      }
+      if (path.startsWith('/cms/v3/blogs/tags')) return { results: [] };
+      if (path.startsWith('/cms/v3/blogs/posts')) return { results: [] };
+      return {};
+    };
+    globalThis.fetch = fetchMock(routes);
+
+    const acct = { name: 'dev', portalId: DEV, key: 'k' };
+    await pull(acct, { contentDir: dir, registry: emptyRegistry(DEV) });
+
+    const authors = JSON.parse(readFileSync(join(dir, 'blog', 'authors.json'), 'utf8'));
+    assert.deepEqual(authors.map((a) => a.slug), ['alyssa-crabbe', 'mike-donnelly'], 'sorted by slug');
+    const mike = authors.find((a) => a.slug === 'mike-donnelly');
+    assert.equal(mike.bio, 'Founder and CEO - Seventh Sense', 'bio is canonical content');
+    assert.equal(mike.avatar, '@asset:authors/mike.jpg', 'avatar hosted URL tokenized to @asset');
+    for (const k of ['id', 'created', 'updated', 'deletedAt']) {
+      assert.ok(!(k in mike), `volatile field ${k} dropped from committed authors.json`);
+    }
+    assert.ok(!JSON.stringify(authors).includes(DEV), 'no per-account portal id committed');
+  } finally {
+    globalThis.fetch = prevFetch;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Shared push harness: a post by Mike, an existing dev author with an EMPTY bio, and
+// authors.json carrying the canonical bio. Records every hub call.
+function authorPushSetup(dir, { posts = ['a'], existingAuthor = { id: 'A1', slug: 'mike-donnelly', displayName: 'Mike Donnelly', bio: '' } } = {}) {
+  const blog = join(dir, 'blog');
+  const postsDir = join(blog, 'posts');
+  mkdirSync(postsDir, { recursive: true });
+  writeFileSync(join(blog, 'authors.json'), JSON.stringify([
+    { slug: 'mike-donnelly', displayName: 'Mike Donnelly', fullName: 'Mike Donnelly', bio: 'Founder and CEO - Seventh Sense', linkedin: 'https://www.linkedin.com/in/mikedonnelly1/' },
+  ]));
+  for (const s of posts) {
+    writeFileSync(join(postsDir, `blog__${s}.json`), JSON.stringify({
+      slug: `blog/${s}`, blogSlug: 'blog', name: s.toUpperCase(), htmlTitle: s,
+      publishDate: '2020-01-01T00:00:00Z', postBody: 'x', postSummary: '',
+      authorSlug: 'mike-donnelly', authorName: 'Mike Donnelly', tagSlugs: [], tagNames: [],
+    }));
+  }
+  const calls = [];
+  const hubFn = async (acct, method, path, body) => {
+    calls.push({ method, path, body });
+    if (path.startsWith('/content/api/v2/blogs')) return { ok: true, status: 200, json: { objects: [BLOGS[0]] } };
+    if (method === 'GET' && path.startsWith('/cms/v3/blogs/posts')) return { ok: true, status: 200, json: { results: [] } };
+    if (method === 'GET' && path.startsWith('/cms/v3/blogs/authors')) {
+      return { ok: true, status: 200, json: { results: existingAuthor ? [existingAuthor] : [] } };
+    }
+    if (method === 'GET' && path.startsWith('/cms/v3/blogs/tags')) return { ok: true, status: 200, json: { results: [] } };
+    if (method === 'POST' && path === '/cms/v3/blogs/authors') return { ok: true, status: 200, json: { id: 'NEW1' } };
+    if (method === 'POST' && path === '/cms/v3/blogs/posts') return { ok: true, status: 200, json: { id: 'P', slug: body.slug } };
+    return { ok: true, status: 200, json: {} };
+  };
+  return { calls, hubFn };
+}
+
+test('push SYNCs an existing author bio from authors.json (PATCH once, even across multiple posts)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'blogauth-push-'));
+  try {
+    const { calls, hubFn } = authorPushSetup(dir, { posts: ['a', 'b'] });
+    const acct = { name: 'dev', portalId: '246389711', key: 'k' };
+    await push(acct, { contentDir: dir, registry: emptyRegistry('246389711'), hubFn });
+    const patches = calls.filter((c) => c.method === 'PATCH' && c.path === '/cms/v3/blogs/authors/A1');
+    assert.equal(patches.length, 1, 'existing author bio PATCHed exactly once for two posts');
+    assert.equal(patches[0].body.bio, 'Founder and CEO - Seventh Sense', 'canonical bio reaches HubSpot');
+    assert.equal(patches[0].body.linkedin, 'https://www.linkedin.com/in/mikedonnelly1/', 'profile field synced too');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('push does NOT PATCH an author bio during dryRun (no preflight writes)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'blogauth-dry-'));
+  try {
+    const { calls, hubFn } = authorPushSetup(dir);
+    const acct = { name: 'dev', portalId: '246389711', key: 'k' };
+    await push(acct, { contentDir: dir, registry: emptyRegistry('246389711'), dryRun: true, hubFn });
+    assert.ok(!calls.some((c) => c.method === 'PATCH' && /\/cms\/v3\/blogs\/authors\//.test(c.path)), 'no author PATCH in dryRun');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('push CREATEs a missing author WITH its canonical bio (not a name-only stub)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'blogauth-create-'));
+  try {
+    const { calls, hubFn } = authorPushSetup(dir, { existingAuthor: null }); // author absent on target
+    const acct = { name: 'dev', portalId: '246389711', key: 'k' };
+    await push(acct, { contentDir: dir, registry: emptyRegistry('246389711'), hubFn });
+    const create = calls.find((c) => c.method === 'POST' && c.path === '/cms/v3/blogs/authors');
+    assert.ok(create, 'a new author was created');
+    assert.equal(create.body.bio, 'Founder and CEO - Seventh Sense', 'create carries the canonical bio');
+    assert.equal(create.body.slug, 'mike-donnelly');
+    // And no redundant PATCH after the create (create already carried the profile).
+    assert.ok(!calls.some((c) => c.method === 'PATCH' && /\/cms\/v3\/blogs\/authors\//.test(c.path)), 'no PATCH after create');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
