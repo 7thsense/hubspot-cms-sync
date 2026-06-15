@@ -13,6 +13,7 @@ import { renderRedirectReport, syncRedirects } from '../src/redirects.mjs';
 import { buildStatic } from '../src/build-static.mjs';
 import { main as reconcileMain } from '../src/reconcile.mjs';
 import { main as deleteMain } from '../src/deletions.mjs';
+import { main as migrateMain, BACKENDS } from '../src/migrate.mjs';
 import { resolve as resolvePath } from 'node:path';
 
 function runNodeScript(script, args, { cwd }) {
@@ -180,6 +181,23 @@ async function main(argv = process.argv) {
     .action(async (account, options) => {
       const config = await withConfig(program.opts());
       await deleteMain(account, { apply: !!options.apply, file: options.file, config });
+    });
+
+  program
+    .command('migrate')
+    .description('one-shot migrate OFF HubSpot: mirror -> build -> deploy to a static host')
+    .argument('<account>', 'source HubSpot account (credential)')
+    .option('--to <backend>', `deploy backend: ${Object.keys(BACKENDS).join('|')}`, 'cloudflare')
+    .option('--project <name>', 'deploy project/site name', 'site')
+    .option('--out <dir>', 'static build output dir', 'dist')
+    .option('--base-url <url>', 'absolute base URL for canonical/og links', '')
+    .option('--no-deploy', 'mirror + build only (skip the deploy step)')
+    .action(async (account, options) => {
+      const config = await withConfig(program.opts());
+      await migrateMain(account, {
+        to: options.to, project: options.project, outDir: options.out,
+        baseUrl: options.baseUrl, deploy: options.deploy !== false, config,
+      });
     });
 
   await program.parseAsync(argv);
