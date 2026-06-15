@@ -121,11 +121,13 @@ export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '
   const opts = { siteDir, site, baseUrl, assetBase, footerIncludes, tagSlugFor, assetManifest };
 
   let fileCount = 0;
+  const sitemapRoutes = []; // every canonical route emitted, for sitemap.xml
   async function emit(route, html) {
     const rel = route === '/' || route === '' ? 'index.html' : join(route.replace(/^\//, ''), 'index.html');
     const file = join(outDir, rel);
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, html, 'utf8');
+    sitemapRoutes.push(route === '' ? '/' : route);
     fileCount++;
   }
 
@@ -186,14 +188,36 @@ export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '
     redirectCount = lines.length;
   }
 
+  // sitemap.xml — HubSpot auto-generates one; the static target must too (SEO parity).
+  // Absolute <loc> from baseUrl (the seo gate parses new URL(loc).pathname). Dedup +
+  // sort; drop paginated /page/N listings (canonical listing is the base path).
+  const seen = new Set();
+  const sitemapLocs = sitemapRoutes
+    .filter((r) => !/\/page\/\d+$/.test(r))
+    .map((r) => `${baseUrl}${r}`)
+    .filter((loc) => (seen.has(loc) ? false : seen.add(loc)))
+    .sort();
+  const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>\n`
+    + `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`
+    + sitemapLocs.map((loc) => `  <url><loc>${loc}</loc></url>`).join('\n')
+    + `\n</urlset>\n`;
+  await writeFile(join(outDir, 'sitemap.xml'), sitemapXml, 'utf8');
+  fileCount++;
+
+  // robots.txt pointing at the sitemap (HubSpot serves one; parity + SEO).
+  await writeFile(join(outDir, 'robots.txt'), `User-agent: *\nAllow: /\nSitemap: ${baseUrl}/sitemap.xml\n`, 'utf8');
+  fileCount++;
+
   // assets, css, and js are all content-hashed now, so immutable caching is safe AND every
-  // change ships a fresh URL (no stale edge cache, no manual purge).
+  // change ships a fresh URL (no stale edge cache, no manual purge). sitemap.xml gets an
+  // explicit xml content-type (the seo gate asserts it).
   await writeFile(join(outDir, '_headers'),
     '/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n'
     + '/css/*\n  Cache-Control: public, max-age=31536000, immutable\n'
     + '/js/*\n  Cache-Control: public, max-age=31536000, immutable\n'
+    + '/sitemap.xml\n  Content-Type: application/xml; charset=utf-8\n'
     + '/*\n  X-Content-Type-Options: nosniff\n  X-Frame-Options: SAMEORIGIN\n  Referrer-Policy: strict-origin-when-cross-origin\n',
     'utf8');
 
-  return { pages: pages.length, posts: posts.length, tags: byTag.size, files: fileCount, redirects: redirectCount };
+  return { pages: pages.length, posts: posts.length, tags: byTag.size, files: fileCount, redirects: redirectCount, sitemap: sitemapLocs.length };
 }

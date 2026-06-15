@@ -254,11 +254,48 @@ function makeEnv(siteDir, { site, opts }) {
   return env;
 }
 
+// Absolute URL helper: leave http(s) as-is, otherwise join onto baseUrl.
+function absUrl(baseUrl, path) {
+  if (!path) return '';
+  if (/^https?:\/\//i.test(path)) return path;
+  return baseUrl + (String(path).startsWith('/') ? path : `/${path}`);
+}
+
+// Build the BlogPosting JSON-LD HubSpot auto-injects on every post, so the static
+// target emits the SAME structured data (parity). Goes into the standard_header_includes
+// head slot — exactly where HubSpot puts it. Yields the {BlogPosting, Person(author),
+// Organization(publisher)} types the schema gate requires.
+export function buildBlogPostingLd(post, { baseUrl = '', assetBase = '/assets' } = {}) {
+  const url = absUrl(baseUrl, post.route);
+  const ld = {
+    '@context': 'https://schema.org',
+    '@type': 'BlogPosting',
+    mainEntityOfPage: { '@type': 'WebPage', '@id': url },
+    headline: post.title,
+    publisher: { '@type': 'Organization', logo: { '@type': 'ImageObject' } },
+  };
+  if (post.publishDate) {
+    ld.datePublished = post.publishDate;
+    ld.dateModified = post.publishDate;
+  }
+  if (post.author?.name) {
+    ld.author = { '@type': 'Person', name: post.author.name };
+    if (post.author.slug) ld.author.url = `${baseUrl}/blog/author/${post.author.slug}`;
+  }
+  if (post.featuredImage) {
+    ld.image = [absUrl(baseUrl, resolveStaticRefs(post.featuredImage, { assetBase }))];
+  }
+  return `<script type="application/ld+json">${JSON.stringify(ld)}</script>`;
+}
+
 // ---------------------------------------------------------------------------
 // Public: render one neutral post view to an HTML string.
 // ---------------------------------------------------------------------------
 export function renderPost(post, { siteDir, site, baseUrl = '', assetBase = '/assets', lang = 'en',
   headerIncludes = '', footerIncludes = '', assetManifest, template = 'templates/blog-post.html' } = {}) {
+  // Inject the BlogPosting JSON-LD HubSpot auto-generates (parity) into the head slot.
+  const headerLd = buildBlogPostingLd(post, { baseUrl, assetBase });
+  headerIncludes = headerLd + (headerIncludes || '');
   const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, assetManifest };
   const env = makeEnv(siteDir, { site, opts });
   const context = {
