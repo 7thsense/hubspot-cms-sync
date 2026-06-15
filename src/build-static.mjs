@@ -15,7 +15,8 @@
 
 import { mkdir, writeFile, cp, readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
+import { join, dirname, basename, extname } from 'node:path';
 
 import { loadSite } from './lib/content-view.mjs';
 import { renderPage, renderPost, renderBlogListing, slugify } from './lib/render.mjs';
@@ -65,17 +66,35 @@ export function resolveThemeTokens(text, theme) {
   });
 }
 
-// Copy a directory, resolving theme tokens in .css files (HubSpot does this server-side).
-async function copyCssResolved(fromDir, toDir, theme) {
-  if (!existsSync(fromDir)) return;
-  await mkdir(toDir, { recursive: true });
-  for (const ent of await readdir(fromDir, { withFileTypes: true })) {
-    const from = join(fromDir, ent.name);
-    const to = join(toDir, ent.name);
-    if (ent.isDirectory()) await copyCssResolved(from, to, theme);
-    else if (ent.name.endsWith('.css')) await writeFile(to, resolveThemeTokens(await readFile(from, 'utf8'), theme), 'utf8');
-    else await cp(from, to);
+// Emit css/js with CONTENT-HASHED filenames (e.g. main.<hash>.css) so they can be cached
+// immutably AND every change gets a fresh URL — no stale edge cache, no manual purge. CSS
+// theme tokens are resolved first (HubSpot does that server-side). Returns a manifest mapping
+// the source-relative path (as get_asset_url requests it) to the hashed URL:
+//   { 'css/main.css': '/css/main.<hash>.css', 'js/app.js': '/js/app.<hash>.js' }
+// Non-hashable sibling files (e.g. a .map) are copied through unchanged.
+const HASHABLE = new Set(['.css', '.js', '.mjs']);
+async function emitHashedAssets(siteDir, outDir, theme) {
+  const manifest = {};
+  async function walk(relDir) {
+    const fromDir = join(siteDir, relDir);
+    if (!existsSync(fromDir)) return;
+    await mkdir(join(outDir, relDir), { recursive: true });
+    for (const ent of await readdir(fromDir, { withFileTypes: true })) {
+      const rel = `${relDir}/${ent.name}`;
+      if (ent.isDirectory()) { await walk(rel); continue; }
+      const ext = extname(ent.name);
+      let bytes = await readFile(join(fromDir, ent.name));
+      if (ext === '.css') bytes = Buffer.from(resolveThemeTokens(bytes.toString('utf8'), theme), 'utf8');
+      if (!HASHABLE.has(ext)) { await writeFile(join(outDir, rel), bytes); continue; }
+      const hash = createHash('sha256').update(bytes).digest('hex').slice(0, 10);
+      const hashedRel = `${relDir}/${basename(ent.name, ext)}.${hash}${ext}`;
+      await writeFile(join(outDir, hashedRel), bytes);
+      manifest[rel] = `/${hashedRel}`;
+    }
   }
+  await walk('css');
+  await walk('js');
+  return manifest;
 }
 
 /**
@@ -95,7 +114,11 @@ export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '
   const site = await loadSite(siteDir);
   const pages = site.pages.filter((p) => p.status === 'published');
   const posts = site.posts.filter((p) => p.status === 'published'); // already newest-first
-  const opts = { siteDir, site, baseUrl, assetBase, footerIncludes, tagSlugFor };
+  // Emit content-hashed css/js up front so get_asset_url() can rewrite references to the
+  // hashed URLs as pages render.
+  const theme = await loadThemeContext(siteDir);
+  const assetManifest = await emitHashedAssets(siteDir, outDir, theme);
+  const opts = { siteDir, site, baseUrl, assetBase, footerIncludes, tagSlugFor, assetManifest };
 
   let fileCount = 0;
   async function emit(route, html) {
@@ -145,12 +168,9 @@ export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '
     await emitListing(`/blog/tag/${slug}`, tagPosts);
   }
 
-  // Assets. get_asset_url maps ../css|js|images -> /css|js|images; @asset:<p> -> /assets/<p>.
-  // CSS is rendered (theme tokens resolved) since HubSpot resolves {{ theme.* }} server-side;
-  // everything else is copied as bytes.
-  const theme = await loadThemeContext(siteDir);
-  await copyCssResolved(join(siteDir, 'css'), join(outDir, 'css'), theme);
-  for (const [src, dest] of [['js', 'js'], ['images', 'images'],
+  // Assets. css/js were already emitted (content-hashed) above; copy the rest as bytes.
+  // get_asset_url maps ../images -> /images; @asset:<p> -> /assets/<p>.
+  for (const [src, dest] of [['images', 'images'],
     ['content/assets', 'assets'], ['content/blog/assets', 'assets']]) {
     const from = join(siteDir, src);
     if (existsSync(from)) await cp(from, join(outDir, dest), { recursive: true });
@@ -166,13 +186,12 @@ export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '
     redirectCount = lines.length;
   }
 
-  // /assets/* are content-hashed, so immutable is safe. css/js use STABLE filenames, so
-  // immutable would pin stale styles at the edge for a year after a deploy — they must
-  // revalidate instead (cheap 304s) so CSS/JS fixes actually reach users.
+  // assets, css, and js are all content-hashed now, so immutable caching is safe AND every
+  // change ships a fresh URL (no stale edge cache, no manual purge).
   await writeFile(join(outDir, '_headers'),
     '/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n'
-    + '/css/*\n  Cache-Control: public, max-age=0, must-revalidate\n'
-    + '/js/*\n  Cache-Control: public, max-age=0, must-revalidate\n'
+    + '/css/*\n  Cache-Control: public, max-age=31536000, immutable\n'
+    + '/js/*\n  Cache-Control: public, max-age=31536000, immutable\n'
     + '/*\n  X-Content-Type-Options: nosniff\n  X-Frame-Options: SAMEORIGIN\n  Referrer-Policy: strict-origin-when-cross-origin\n',
     'utf8');
 

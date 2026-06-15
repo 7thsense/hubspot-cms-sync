@@ -227,7 +227,12 @@ function makeEnv(siteDir, { site, opts }) {
     end === null || end === undefined ? String(str ?? '').slice(start) : String(str ?? '').slice(start, end));
   env.addFilter('format_date', formatDate);
 
-  env.addGlobal('get_asset_url', assetUrl);
+  // get_asset_url rewrites css/js references to their content-hashed URLs when a build
+  // manifest is present (static target); otherwise it falls back to the plain path.
+  env.addGlobal('get_asset_url', (path) => {
+    const key = String(path).replace(/^(\.\.\/)+/, '').replace(/^\/+/, '');
+    return opts.assetManifest?.[key] || assetUrl(path);
+  });
   // Absolute site origin from the build's baseUrl (e.g. https://www2.7thsense.io).
   // Templates need it for absolute URLs that relative paths can't satisfy —
   // og:image/twitter:image especially, which social scrapers reject when relative.
@@ -253,8 +258,8 @@ function makeEnv(siteDir, { site, opts }) {
 // Public: render one neutral post view to an HTML string.
 // ---------------------------------------------------------------------------
 export function renderPost(post, { siteDir, site, baseUrl = '', assetBase = '/assets', lang = 'en',
-  headerIncludes = '', footerIncludes = '', template = 'templates/blog-post.html' } = {}) {
-  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes };
+  headerIncludes = '', footerIncludes = '', assetManifest, template = 'templates/blog-post.html' } = {}) {
+  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, assetManifest };
   const env = makeEnv(siteDir, { site, opts });
   const context = {
     content: postContent(post, opts),
@@ -286,8 +291,8 @@ function pageContent(page, { baseUrl = '' } = {}) {
 // Public: render one neutral page view (with its module map) to an HTML string.
 // ---------------------------------------------------------------------------
 export function renderPage(page, { siteDir, site, baseUrl = '', assetBase = '/assets', lang = 'en',
-  headerIncludes = '', footerIncludes = '' } = {}) {
-  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes };
+  headerIncludes = '', footerIncludes = '', assetManifest } = {}) {
+  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, assetManifest };
   const env = makeEnv(siteDir, { site, opts });
   const context = {
     content: pageContent(page, opts),
@@ -306,9 +311,9 @@ export function renderPage(page, { siteDir, site, baseUrl = '', assetBase = '/as
 // by contents.total_page_count > 1) is inert.
 // ---------------------------------------------------------------------------
 export function renderBlogListing(posts, { siteDir, site, baseUrl = '', assetBase = '/assets', lang = 'en',
-  headerIncludes = '', footerIncludes = '', tagSlugFor, route = '/blog',
+  headerIncludes = '', footerIncludes = '', tagSlugFor, route = '/blog', assetManifest,
   basePath = null, pageNum = 1, pageSize = 0 } = {}) {
-  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, tagSlugFor };
+  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, tagSlugFor, assetManifest };
   const env = makeEnv(siteDir, { site, opts });
   // Pagination: pageSize <= 0 keeps the whole list on one page (back-compat). Otherwise
   // slice to the page window. blog_page_link mirrors HubSpot — page 1 is the listing
