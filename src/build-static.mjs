@@ -13,7 +13,7 @@
 //   _redirects                 Cloudflare redirects from sync/redirects.csv
 //   _headers                   cache + basic security headers
 
-import { mkdir, writeFile, cp, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, cp, readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
@@ -32,6 +32,50 @@ async function loadTagSlugs(siteDir) {
     /* tags.json optional — fall back to slugify */
   }
   return map;
+}
+
+// Build a `theme` context from the theme fields (fields.json) so HubL `{{ theme.* }}`
+// expressions in CSS resolve to the field defaults. HubSpot resolves these server-side;
+// the static target must do it at build time or brand colors — var(--brand) etc. — break
+// (an invalid custom property silently drops the whole declaration that references it).
+export function themeFromFields(fields) {
+  const obj = {};
+  for (const f of Array.isArray(fields) ? fields : []) {
+    if (!f?.name) continue;
+    obj[f.name] = f.type === 'group' ? themeFromFields(f.children) : f.default;
+  }
+  return obj;
+}
+
+async function loadThemeContext(siteDir) {
+  try {
+    return themeFromFields(JSON.parse(await readFile(join(siteDir, 'fields.json'), 'utf8')));
+  } catch {
+    return {};
+  }
+}
+
+// Resolve `{{ theme.a.b.c }}` tokens against the theme context. Targeted to theme.* only,
+// so it can't disturb CSS syntax; unknown paths are left untouched.
+export function resolveThemeTokens(text, theme) {
+  return String(text).replace(/\{\{\s*theme\.([\w.]+)\s*\}\}/g, (m, path) => {
+    let v = theme;
+    for (const k of path.split('.')) v = v == null ? v : v[k];
+    return v == null ? m : String(v);
+  });
+}
+
+// Copy a directory, resolving theme tokens in .css files (HubSpot does this server-side).
+async function copyCssResolved(fromDir, toDir, theme) {
+  if (!existsSync(fromDir)) return;
+  await mkdir(toDir, { recursive: true });
+  for (const ent of await readdir(fromDir, { withFileTypes: true })) {
+    const from = join(fromDir, ent.name);
+    const to = join(toDir, ent.name);
+    if (ent.isDirectory()) await copyCssResolved(from, to, theme);
+    else if (ent.name.endsWith('.css')) await writeFile(to, resolveThemeTokens(await readFile(from, 'utf8'), theme), 'utf8');
+    else await cp(from, to);
+  }
 }
 
 /**
@@ -102,7 +146,11 @@ export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '
   }
 
   // Assets. get_asset_url maps ../css|js|images -> /css|js|images; @asset:<p> -> /assets/<p>.
-  for (const [src, dest] of [['css', 'css'], ['js', 'js'], ['images', 'images'],
+  // CSS is rendered (theme tokens resolved) since HubSpot resolves {{ theme.* }} server-side;
+  // everything else is copied as bytes.
+  const theme = await loadThemeContext(siteDir);
+  await copyCssResolved(join(siteDir, 'css'), join(outDir, 'css'), theme);
+  for (const [src, dest] of [['js', 'js'], ['images', 'images'],
     ['content/assets', 'assets'], ['content/blog/assets', 'assets']]) {
     const from = join(siteDir, src);
     if (existsSync(from)) await cp(from, join(outDir, dest), { recursive: true });
