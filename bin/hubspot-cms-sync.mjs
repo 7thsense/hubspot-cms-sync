@@ -56,6 +56,7 @@ async function main(argv = process.argv) {
     .option('--out <dir>', 'output directory', 'dist')
     .option('--base-url <url>', 'absolute base URL for canonical/og links', '')
     .option('--tracking-portal <id>', 'HubSpot tracking-script portal id (keeps forms de-anonymizing)')
+    .option('--forms-portal <id>', 'HubSpot portal id whose registry resolves embedded @form/@portal/@cta (which account forms POST to)')
     .option('--blog-page-size <n>', 'posts per blog listing page (match the HubSpot blog setting)', '10')
     .action(async (options) => {
       const config = await withConfig(program.opts());
@@ -64,6 +65,7 @@ async function main(argv = process.argv) {
         outDir: resolvePath(config.root, options.out),
         baseUrl: options.baseUrl,
         trackingPortalId: options.trackingPortal,
+        formsPortal: options.formsPortal,
         blogPageSize: Number(options.blogPageSize),
       });
       console.log(`built static site -> ${options.out}`);

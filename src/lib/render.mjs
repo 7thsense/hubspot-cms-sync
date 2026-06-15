@@ -67,14 +67,24 @@ function makeLoader(siteDir) {
 }
 
 // ---------------------------------------------------------------------------
-// Static ref resolution. The HubSpot target resolves @asset:/@portal to portal
-// GUIDs + hosted hubfs URLs (lib/refs.mjs); the static target resolves them to
-// local paths under the deployed site. Minimal for the spike: @asset:NAME ->
-// /assets/NAME, applied to attribute values and rich-text bodies alike.
+// Static ref resolution. @asset resolves to a LOCAL path under the deployed site
+// (/assets/NAME). @form/@portal/@cta/@menu still point at HubSpot — embedded HubSpot
+// forms POST to the HubSpot Forms API and CTAs link to HubSpot — so they resolve to a
+// chosen HubSpot account's ids via its ref REGISTRY (the same map the push uses). When
+// no registry is supplied these are left as-is (back-compat); without it, a form embed
+// would carry literal @portal/@form:key and submit to an invalid URL.
 // ---------------------------------------------------------------------------
-export function resolveStaticRefs(value, { assetBase = '/assets' } = {}) {
+export function resolveStaticRefs(value, { assetBase = '/assets', registry = null } = {}) {
   if (value == null) return value;
-  return String(value).replace(/@asset:([^\s"'<>)]+)/g, (_m, nameRef) => `${assetBase}/${nameRef}`);
+  let out = String(value).replace(/@asset:([^\s"'<>)]+)/g, (_m, nameRef) => `${assetBase}/${nameRef}`);
+  if (registry) {
+    out = out
+      .replace(/@portal\b/g, () => (registry.portalId != null ? String(registry.portalId) : '@portal'))
+      .replace(/@form:([A-Za-z0-9_-]+)/g, (m, k) => registry.forms?.[k] ?? m)
+      .replace(/@cta:([A-Za-z0-9_-]+)/g, (m, k) => registry.ctas?.[k] ?? m)
+      .replace(/@menu:([A-Za-z0-9_-]+)/g, (m, k) => registry.menus?.[k] ?? m);
+  }
+  return out;
 }
 
 // HubSpot evaluates HubL functions embedded in rich-text bodies at render time; the
@@ -292,21 +302,20 @@ export function buildBlogPostingLd(post, { baseUrl = '', assetBase = '/assets' }
 // Public: render one neutral post view to an HTML string.
 // ---------------------------------------------------------------------------
 export function renderPost(post, { siteDir, site, baseUrl = '', assetBase = '/assets', lang = 'en',
-  headerIncludes = '', footerIncludes = '', assetManifest, template = 'templates/blog-post.html' } = {}) {
+  headerIncludes = '', footerIncludes = '', assetManifest, registry = null, template = 'templates/blog-post.html' } = {}) {
   // Inject the BlogPosting JSON-LD HubSpot auto-generates (parity) into the head slot.
   const headerLd = buildBlogPostingLd(post, { baseUrl, assetBase });
   headerIncludes = headerLd + (headerIncludes || '');
-  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, assetManifest };
+  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, assetManifest, registry };
   const env = makeEnv(siteDir, { site, opts });
   const context = {
     content: postContent(post, opts),
     nav_active: null,
     nav_hide_cta: false,
   };
-  // Resolve @asset refs that live in the TEMPLATE itself (not just content fields) —
-  // e.g. og:image or img src pointing at content assets. Idempotent: already-resolved
-  // content has no @asset tokens left.
-  return resolveStaticRefs(env.render(template, context), { assetBase });
+  // Resolve @asset (-> /assets) and @form/@portal/@cta (-> HubSpot ids via registry)
+  // across the TEMPLATE output too — e.g. a form embed's data-hs-form="@form:key".
+  return resolveStaticRefs(env.render(template, context), { assetBase, registry });
 }
 
 // ---------------------------------------------------------------------------
@@ -328,8 +337,8 @@ function pageContent(page, { baseUrl = '' } = {}) {
 // Public: render one neutral page view (with its module map) to an HTML string.
 // ---------------------------------------------------------------------------
 export function renderPage(page, { siteDir, site, baseUrl = '', assetBase = '/assets', lang = 'en',
-  headerIncludes = '', footerIncludes = '', assetManifest } = {}) {
-  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, assetManifest };
+  headerIncludes = '', footerIncludes = '', assetManifest, registry = null } = {}) {
+  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, assetManifest, registry };
   const env = makeEnv(siteDir, { site, opts });
   const context = {
     content: pageContent(page, opts),
@@ -337,7 +346,7 @@ export function renderPage(page, { siteDir, site, baseUrl = '', assetBase = '/as
     nav_active: null,
     nav_hide_cta: false,
   };
-  return resolveStaticRefs(env.render(page.template, context), { assetBase });
+  return resolveStaticRefs(env.render(page.template, context), { assetBase, registry });
 }
 
 // ---------------------------------------------------------------------------
@@ -348,9 +357,9 @@ export function renderPage(page, { siteDir, site, baseUrl = '', assetBase = '/as
 // by contents.total_page_count > 1) is inert.
 // ---------------------------------------------------------------------------
 export function renderBlogListing(posts, { siteDir, site, baseUrl = '', assetBase = '/assets', lang = 'en',
-  headerIncludes = '', footerIncludes = '', tagSlugFor, route = '/blog', assetManifest,
+  headerIncludes = '', footerIncludes = '', tagSlugFor, route = '/blog', assetManifest, registry = null,
   basePath = null, pageNum = 1, pageSize = 0 } = {}) {
-  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, tagSlugFor, assetManifest };
+  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, tagSlugFor, assetManifest, registry };
   const env = makeEnv(siteDir, { site, opts });
   // Pagination: pageSize <= 0 keeps the whole list on one page (back-compat). Otherwise
   // slice to the page window. blog_page_link mirrors HubSpot — page 1 is the listing
@@ -368,7 +377,7 @@ export function renderBlogListing(posts, { siteDir, site, baseUrl = '', assetBas
     nav_active: null,
     nav_hide_cta: false,
   };
-  return resolveStaticRefs(env.render('templates/blog.html', context), { assetBase });
+  return resolveStaticRefs(env.render('templates/blog.html', context), { assetBase, registry });
 }
 
 export { postContent, pageContent, assetUrl, localizeDate, makeEnv };

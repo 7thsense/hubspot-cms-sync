@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto';
 import { join, dirname, basename, extname } from 'node:path';
 
 import { loadSite } from './lib/content-view.mjs';
-import { renderPage, renderPost, renderBlogListing, slugify } from './lib/render.mjs';
+import { renderPage, renderPost, renderBlogListing, slugify, resolveStaticRefs } from './lib/render.mjs';
 import { readRedirectSpecs } from './redirects.mjs';
 
 async function loadTagSlugs(siteDir) {
@@ -73,7 +73,7 @@ export function resolveThemeTokens(text, theme) {
 //   { 'css/main.css': '/css/main.<hash>.css', 'js/app.js': '/js/app.<hash>.js' }
 // Non-hashable sibling files (e.g. a .map) are copied through unchanged.
 const HASHABLE = new Set(['.css', '.js', '.mjs']);
-async function emitHashedAssets(siteDir, outDir, theme) {
+async function emitHashedAssets(siteDir, outDir, theme, registry = null, assetBase = '/assets') {
   const manifest = {};
   async function walk(relDir) {
     const fromDir = join(siteDir, relDir);
@@ -85,6 +85,11 @@ async function emitHashedAssets(siteDir, outDir, theme) {
       const ext = extname(ent.name);
       let bytes = await readFile(join(fromDir, ent.name));
       if (ext === '.css') bytes = Buffer.from(resolveThemeTokens(bytes.toString('utf8'), theme), 'utf8');
+      // Theme JS (e.g. hs-forms.js) carries @portal/@form/@cta — the HubSpot forms script
+      // builds its submit URL from them. Resolve to the chosen account's ids via registry.
+      if ((ext === '.js' || ext === '.css') && registry) {
+        bytes = Buffer.from(resolveStaticRefs(bytes.toString('utf8'), { assetBase, registry }), 'utf8');
+      }
       if (!HASHABLE.has(ext)) { await writeFile(join(outDir, rel), bytes); continue; }
       const hash = createHash('sha256').update(bytes).digest('hex').slice(0, 10);
       const hashedRel = `${relDir}/${basename(ent.name, ext)}.${hash}${ext}`;
@@ -97,14 +102,28 @@ async function emitHashedAssets(siteDir, outDir, theme) {
   return manifest;
 }
 
+// Load the ref registry for the account the static site's forms/CTAs point at, so the
+// build can resolve @form/@portal/@cta to real HubSpot ids (embedded forms POST to the
+// HubSpot Forms API; CTAs link to HubSpot). It is the same .sync-state/<portal>.registry
+// the push uses. null when no formsPortal is given (refs are then left as-is).
+async function loadFormsRegistry(siteDir, formsPortal) {
+  if (!formsPortal) return null;
+  try {
+    return JSON.parse(await readFile(join(siteDir, '.sync-state', `${formsPortal}.registry.json`), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 /**
- * buildStatic({ siteDir, outDir, baseUrl, assetBase, trackingPortalId }) -> summary
+ * buildStatic({ siteDir, outDir, baseUrl, assetBase, trackingPortalId, formsPortal }) -> summary
  *
  * baseUrl is used for canonical/og absolute URLs (e.g. https://www2.7thsense.io).
- * trackingPortalId, if set, injects the HubSpot tracking script into the footer so
- * forms keep de-anonymizing (`standard_footer_includes`). Returns counts.
+ * trackingPortalId, if set, injects the HubSpot tracking script into the footer.
+ * formsPortal, if set, is the HubSpot portal id whose ref registry resolves embedded
+ * @form/@portal/@cta tokens — i.e. which account the static site's forms POST to. Returns counts.
  */
-export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '/assets', trackingPortalId, blogPageSize = 10 } = {}) {
+export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '/assets', trackingPortalId, formsPortal, blogPageSize = 10 } = {}) {
   const tagMap = await loadTagSlugs(siteDir);
   const tagSlugFor = (name) => tagMap[name] || slugify(name);
   const footerIncludes = trackingPortalId
@@ -115,10 +134,12 @@ export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '
   const pages = site.pages.filter((p) => p.status === 'published');
   const posts = site.posts.filter((p) => p.status === 'published'); // already newest-first
   // Emit content-hashed css/js up front so get_asset_url() can rewrite references to the
-  // hashed URLs as pages render.
+  // hashed URLs as pages render. The registry resolves @form/@portal/@cta in both the
+  // theme JS and the rendered pages.
   const theme = await loadThemeContext(siteDir);
-  const assetManifest = await emitHashedAssets(siteDir, outDir, theme);
-  const opts = { siteDir, site, baseUrl, assetBase, footerIncludes, tagSlugFor, assetManifest };
+  const registry = await loadFormsRegistry(siteDir, formsPortal);
+  const assetManifest = await emitHashedAssets(siteDir, outDir, theme, registry, assetBase);
+  const opts = { siteDir, site, baseUrl, assetBase, footerIncludes, tagSlugFor, assetManifest, registry };
 
   let fileCount = 0;
   const sitemapRoutes = []; // every canonical route emitted, for sitemap.xml

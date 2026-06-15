@@ -9,7 +9,27 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { buildBlogPostingLd, renderPost } from '../../src/lib/render.mjs';
+import { buildBlogPostingLd, renderPost, resolveStaticRefs } from '../../src/lib/render.mjs';
+
+test('resolveStaticRefs: @asset -> path always; @form/@portal/@cta -> ids only with a registry', () => {
+  const text = 'a=@asset:logo.png p=@portal f=@form:demo c=@cta:book';
+  // No registry: assets resolve, the rest are left as-is (so the gap is visible, not silent).
+  assert.equal(
+    resolveStaticRefs(text, { assetBase: '/assets' }),
+    'a=/assets/logo.png p=@portal f=@form:demo c=@cta:book',
+  );
+  // With a registry: form/portal/cta resolve to the account's ids (forms POST to HubSpot).
+  const registry = { portalId: '246389711', forms: { demo: 'GUID-DEMO' }, ctas: { book: 'GUID-CTA' } };
+  assert.equal(
+    resolveStaticRefs(text, { assetBase: '/assets', registry }),
+    'a=/assets/logo.png p=246389711 f=GUID-DEMO c=GUID-CTA',
+  );
+});
+
+test('resolveStaticRefs: an unmapped @form key is left intact (never a wrong id)', () => {
+  const registry = { portalId: '1', forms: { demo: 'G' } };
+  assert.equal(resolveStaticRefs('@form:unknown', { registry }), '@form:unknown');
+});
 
 const POST = {
   route: '/blog/spf-dkim',
