@@ -54,6 +54,7 @@ export const SURFACES = [
     live: isLivePage,
     keyOf: (p) => String(p.slug ?? ''),
     label: (p) => ({ key: String(p.slug ?? ''), state: String(p.currentState ?? p.state ?? ''), url: p.url ?? '', id: String(p.id ?? '') }),
+    deletePath: (id) => `/cms/v3/pages/site-pages/${id}`,
   },
   {
     key: 'landing-pages',
@@ -61,6 +62,7 @@ export const SURFACES = [
     live: isLivePage,
     keyOf: (p) => String(p.slug ?? ''),
     label: (p) => ({ key: String(p.slug ?? ''), state: String(p.currentState ?? p.state ?? ''), url: p.url ?? '', id: String(p.id ?? '') }),
+    deletePath: (id) => `/cms/v3/pages/landing-pages/${id}`,
   },
   {
     key: 'blog-posts',
@@ -68,6 +70,7 @@ export const SURFACES = [
     live: (p) => String(p.state ?? '') === 'PUBLISHED',
     keyOf: (p) => String(p.slug ?? ''),
     label: (p) => ({ key: String(p.slug ?? ''), state: String(p.state ?? ''), url: p.url ?? '', id: String(p.id ?? '') }),
+    deletePath: (id) => `/cms/v3/blogs/posts/${id}`,
   },
   {
     key: 'blog-authors',
@@ -75,6 +78,7 @@ export const SURFACES = [
     live: () => true,
     keyOf: (a) => String(a.slug ?? ''),
     label: (a) => ({ key: String(a.slug ?? ''), state: '', url: '', id: String(a.id ?? '') }),
+    deletePath: (id) => `/cms/v3/blogs/authors/${id}`,
   },
   {
     key: 'blog-tags',
@@ -82,6 +86,7 @@ export const SURFACES = [
     live: () => true,
     keyOf: (t) => String(t.slug ?? ''),
     label: (t) => ({ key: String(t.slug ?? ''), state: '', url: '', id: String(t.id ?? '') }),
+    deletePath: (id) => `/cms/v3/blogs/tags/${id}`,
   },
   {
     key: 'url-redirects',
@@ -89,6 +94,7 @@ export const SURFACES = [
     live: () => true,
     keyOf: (r) => redirectPath(r.routePrefix ?? r.url ?? ''),
     label: (r) => ({ key: redirectPath(r.routePrefix ?? r.url ?? ''), state: '', url: String(r.destination ?? ''), id: String(r.id ?? '') }),
+    deletePath: (id) => `/cms/v3/url-redirects/${id}`,
   },
   {
     key: 'menus',
@@ -100,8 +106,11 @@ export const SURFACES = [
     live: () => true,
     keyOf: (m) => String(m.name ?? m.label ?? ''),
     label: (m) => ({ key: String(m.name ?? m.label ?? ''), state: '', url: '', id: String(m.id ?? '') }),
+    deletePath: (id) => `/content/api/v2/menus/${id}`,
   },
 ];
+
+export const SURFACE_BY_KEY = Object.fromEntries(SURFACES.map((s) => [s.key, s]));
 
 // ---------------------------------------------------------------------------
 // classifySurface(gitKeys, accountItems, surface) -> classification  [PURE]

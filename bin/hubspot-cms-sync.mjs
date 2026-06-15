@@ -12,6 +12,7 @@ import { main as manifestMain } from '../src/manifest.mjs';
 import { renderRedirectReport, syncRedirects } from '../src/redirects.mjs';
 import { buildStatic } from '../src/build-static.mjs';
 import { main as reconcileMain } from '../src/reconcile.mjs';
+import { main as deleteMain } from '../src/deletions.mjs';
 import { resolve as resolvePath } from 'node:path';
 
 function runNodeScript(script, args, { cwd }) {
@@ -168,6 +169,17 @@ async function main(argv = process.argv) {
     .action(async (accounts) => {
       const config = await withConfig(program.opts());
       await reconcileMain(accounts, { config });
+    });
+
+  program
+    .command('delete')
+    .description('delete content listed in sync/deletions.csv (dry-run unless --apply)')
+    .argument('<account>')
+    .option('--apply', 'actually delete (default: dry-run plan only)')
+    .option('--file <path>', 'deletions list path (default sync/deletions.csv)')
+    .action(async (account, options) => {
+      const config = await withConfig(program.opts());
+      await deleteMain(account, { apply: !!options.apply, file: options.file, config });
     });
 
   await program.parseAsync(argv);
