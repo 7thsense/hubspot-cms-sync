@@ -11,6 +11,7 @@ import { main as republishMain } from '../src/republish.mjs';
 import { main as manifestMain } from '../src/manifest.mjs';
 import { renderRedirectReport, syncRedirects } from '../src/redirects.mjs';
 import { buildStatic } from '../src/build-static.mjs';
+import { main as reconcileMain } from '../src/reconcile.mjs';
 import { resolve as resolvePath } from 'node:path';
 
 function runNodeScript(script, args, { cwd }) {
@@ -158,6 +159,15 @@ async function main(argv = process.argv) {
       const config = await withConfig(program.opts());
       const code = await manifestMain(args, { config });
       if (code) process.exitCode = code;
+    });
+
+  program
+    .command('reconcile')
+    .description('read-only cross-account orphan/missing report (git vs HubSpot)')
+    .argument('<accounts...>', 'one or more account names (e.g. prod dev)')
+    .action(async (accounts) => {
+      const config = await withConfig(program.opts());
+      await reconcileMain(accounts, { config });
     });
 
   await program.parseAsync(argv);
