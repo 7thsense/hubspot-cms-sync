@@ -112,6 +112,36 @@ export const SURFACES = [
 
 export const SURFACE_BY_KEY = Object.fromEntries(SURFACES.map((s) => [s.key, s]));
 
+// Surfaces the toolkit does NOT migrate (no adapter). We PROBE them read-only so a
+// non-empty one is FLAGGED loudly instead of silently dropped — the operator must know
+// before cutover ("no surprises"). count() pulls a coarse size; a 403 MISSING_SCOPES is
+// itself a finding (the credential can't even see it).
+export const UNSUPPORTED_SURFACES = [
+  { key: 'hubdb-tables', path: '/cms/v3/hubdb/tables?limit=1', note: 'HubDB tables — needs the hubdb scope on the credential to migrate' },
+  { key: 'knowledge-base', path: '/cms/v3/knowledge-base/articles?limit=1', note: 'Knowledge Base articles — no adapter' },
+  { key: 'marketing-emails', path: '/marketing/v3/emails?limit=1', note: 'Marketing emails — out of CMS scope; no adapter' },
+  { key: 'hubdb-v2', path: '/hubdb/api/v2/tables?limit=1', note: 'HubDB (v2) — needs the hubdb scope' },
+];
+
+// probeUnsupported(acct, hub) -> [{ key, status, count, flagged, note }]
+export async function probeUnsupported(acct, hub) {
+  const out = [];
+  for (const s of UNSUPPORTED_SURFACES) {
+    try {
+      const { ok, status, json } = await hub(acct, 'GET', s.path);
+      const count = typeof json?.total === 'number' ? json.total
+        : Array.isArray(json?.results) ? json.results.length
+          : Array.isArray(json?.objects) ? json.objects.length : null;
+      // Flag if there's content OR the credential is forbidden from even checking.
+      const flagged = (ok && count > 0) || status === 403;
+      out.push({ key: s.key, status, count, flagged, note: s.note });
+    } catch (e) {
+      out.push({ key: s.key, status: 'EXC', count: null, flagged: true, note: `${s.note} (${e.message.slice(0, 60)})` });
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // classifySurface(gitKeys, accountItems, surface) -> classification  [PURE]
 // ---------------------------------------------------------------------------
@@ -210,7 +240,8 @@ export async function reconcile(accountNames, { config, accountFn = realAccount,
       const result = classifySurface(gitIndex[surface.key] ?? new Set(), items, surface);
       surfaces.push(error ? { ...result, error } : result);
     }
-    accounts.push({ name, portalId: acct.portalId, surfaces });
+    const unsupported = await probeUnsupported(acct, hub);
+    accounts.push({ name, portalId: acct.portalId, surfaces, unsupported });
   }
 
   return { gitIndex, accounts };
@@ -245,6 +276,14 @@ export function formatReport({ accounts }, { cap = 40 } = {}) {
       }
       if (s.missing.length) {
         lines.push(`     MISSING (in git, not on account): ${capList(s.missing, cap)}`);
+      }
+    }
+    const flagged = (acct.unsupported || []).filter((u) => u.flagged);
+    if (flagged.length) {
+      lines.push('  UNSUPPORTED SURFACES (no adapter — would NOT migrate; flagged so they are not a surprise):');
+      for (const u of flagged) {
+        const size = u.status === 403 ? 'FORBIDDEN (403 — credential lacks scope)' : `count=${u.count}`;
+        lines.push(`     ⚠ ${u.key.padEnd(16)} ${size}  — ${u.note}`);
       }
     }
   }

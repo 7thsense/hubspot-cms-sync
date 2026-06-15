@@ -4,7 +4,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { classifySurface, SURFACES, reconcile, formatReport, redirectPath } from '../../src/reconcile.mjs';
+import { classifySurface, SURFACES, reconcile, formatReport, redirectPath, probeUnsupported } from '../../src/reconcile.mjs';
+
+test('probeUnsupported: flags a non-empty surface and a 403 (missing scope), not an empty one', async () => {
+  const hub = async (acct, method, path) => {
+    if (path.includes('hubdb/tables')) return { ok: false, status: 403, json: { category: 'MISSING_SCOPES' } };
+    if (path.includes('knowledge-base')) return { ok: true, status: 200, json: { total: 12 } }; // has content
+    return { ok: true, status: 200, json: { total: 0 } }; // empty -> not flagged
+  };
+  const out = await probeUnsupported({ portalId: '529456' }, hub);
+  const byKey = Object.fromEntries(out.map((u) => [u.key, u]));
+  assert.equal(byKey['hubdb-tables'].flagged, true, '403 is itself a finding');
+  assert.equal(byKey['knowledge-base'].flagged, true, 'non-empty surface flagged');
+  assert.equal(byKey['marketing-emails'].flagged, false, 'empty surface not flagged');
+});
 
 test('redirectPath: strips scheme+host so absolute and path redirects compare equal', () => {
   assert.equal(redirectPath('http://www.theseventhsense.com/team'), '/team');
