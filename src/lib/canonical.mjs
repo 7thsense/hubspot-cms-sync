@@ -165,7 +165,9 @@ const WIDGET_KEEP = ['body', 'name', 'type', 'label', 'css', 'child_css'];
  * canonicalPage(rawPage) -> canonical page definition
  *
  * Produces the portable, slug-keyed page DEFINITION object:
- *   { slug, name, htmlTitle, metaDescription, language, templatePath, widgets }
+ *   { slug, name, htmlTitle, metaDescription, language, templatePath,
+ *     headHtml, footerHtml, linkRelCanonicalUrl,
+ *     featuredImage, featuredImageAltText, useFeaturedImage, widgets }
  *
  * - slug:            raw slug, defaulting to '' (homepage). NOT the volatile id.
  * - name/htmlTitle/metaDescription: SEO/definition fields, defaulted to ''.
@@ -173,6 +175,13 @@ const WIDGET_KEEP = ['body', 'name', 'type', 'label', 'css', 'child_css'];
  * - templatePath:    kept as-is (the manifest-driven rewrite of non-portable
  *                    marketplace/generated paths is a separate adapter
  *                    concern, intentionally NOT done here so this stays pure).
+ * - headHtml/footerHtml: page-instance custom <head>/footer code (tracking pixels,
+ *                    JSON-LD, CTA style fixes). CONTENT — dropping it silently lost
+ *                    it on cutover. Carries per-account refs (CTA/portal/asset),
+ *                    canonicalized with the rest of the def on pull, resolved on push.
+ * - linkRelCanonicalUrl: SEO canonical override (else duplicate-content risk).
+ * - featuredImage/AltText/useFeaturedImage: OG/social image (a hosted URL — tokenized
+ *                    to @asset where the bytes are known, same as a blog featuredImage).
  * - widgets:         normalized widget carrier map (see normalizeWidgets).
  *
  * Volatile page-level keys (id, url, *At, currentState, publishDate, ...) are
@@ -189,6 +198,12 @@ export function canonicalPage(rawPage) {
     metaDescription: raw.metaDescription ?? '',
     language: raw.language ?? 'en',
     templatePath: raw.templatePath ?? '',
+    headHtml: raw.headHtml ?? '',
+    footerHtml: raw.footerHtml ?? '',
+    linkRelCanonicalUrl: raw.linkRelCanonicalUrl ?? '',
+    featuredImage: raw.featuredImage ?? '',
+    featuredImageAltText: raw.featuredImageAltText ?? '',
+    useFeaturedImage: raw.useFeaturedImage ?? false,
     widgets: normalizeWidgets(raw.widgets),
   };
 }

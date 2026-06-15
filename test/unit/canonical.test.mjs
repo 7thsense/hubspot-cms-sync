@@ -144,6 +144,12 @@ test('canonicalPage projects exactly the definition fields and drops volatile', 
     metaDescription: 'Who we are',
     language: 'en',
     templatePath: 'templates/about.html',
+    headHtml: '<script>1</script>',
+    footerHtml: '',
+    linkRelCanonicalUrl: 'https://x/about',
+    featuredImage: 'https://cdn/og.png',
+    featuredImageAltText: 'og',
+    useFeaturedImage: true,
     url: 'https://theseventhsense.com/about',
     createdAt: '2025-08-05T23:29:04.222Z',
     currentState: 'PUBLISHED',
@@ -158,12 +164,29 @@ test('canonicalPage projects exactly the definition fields and drops volatile', 
     metaDescription: 'Who we are',
     language: 'en',
     templatePath: 'templates/about.html',
+    headHtml: '<script>1</script>',
+    footerHtml: '',
+    linkRelCanonicalUrl: 'https://x/about',
+    featuredImage: 'https://cdn/og.png',
+    featuredImageAltText: 'og',
+    useFeaturedImage: true,
     widgets: {},
   });
   // No volatile keys leaked.
   for (const k of ['id', 'url', 'createdAt', 'currentState', 'publishDate']) {
     assert.ok(!(k in out), `${k} not in canonical page`);
   }
+});
+
+test('canonicalPage captures head/footer/SEO/OG fields with safe defaults (no silent drop)', () => {
+  // The fields that were silently dropped before — default to '' / false, never undefined.
+  const out = canonicalPage({ slug: 'x', name: 'X', templatePath: 't.html' });
+  assert.equal(out.headHtml, '');
+  assert.equal(out.footerHtml, '');
+  assert.equal(out.linkRelCanonicalUrl, '');
+  assert.equal(out.featuredImage, '');
+  assert.equal(out.featuredImageAltText, '');
+  assert.equal(out.useFeaturedImage, false);
 });
 
 test('canonicalPage defaults homepage empty slug and language', () => {

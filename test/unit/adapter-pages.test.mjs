@@ -244,6 +244,12 @@ test('buildPagePayload projects only definition fields and drops leading slash o
     metaDescription: 'd',
     language: 'en',
     templatePath: '/templates/about.html',
+    headHtml: '<meta>',
+    footerHtml: '',
+    linkRelCanonicalUrl: 'https://x/about',
+    featuredImage: '@asset:og.png',
+    featuredImageAltText: 'og',
+    useFeaturedImage: true,
     widgets: { hero: {} }, // must NOT appear
     id: 'x', // must NOT appear
   });
@@ -254,7 +260,14 @@ test('buildPagePayload projects only definition fields and drops leading slash o
     metaDescription: 'd',
     language: 'en',
     templatePath: 'templates/about.html', // leading slash stripped
+    headHtml: '<meta>',
+    footerHtml: '',
+    linkRelCanonicalUrl: 'https://x/about',
+    featuredImage: '@asset:og.png',
+    featuredImageAltText: 'og',
+    useFeaturedImage: true,
   });
+  assert.ok(!('widgets' in p) && !('id' in p), 'widgets + volatile id never pushed by this adapter');
 });
 
 // ── PUSH: create-vs-update decision by slug, via stubbed hub ─────────────────
@@ -886,7 +899,7 @@ test('push THROWS when an item schedule fails (non-2xx) — no silent draft/live
 
 // ── buildPagePayload defaults (no field-dropping / no undefined leaks) ────────
 
-test('buildPagePayload supplies safe defaults (slug->"", language->"en", missing->"")', () => {
+test('buildPagePayload supplies safe defaults (slug->"", language->"en", missing->"", useFeaturedImage->false)', () => {
   const p = buildPagePayload({ name: 'Only a name' });
   assert.deepEqual(p, {
     slug: '',
@@ -895,6 +908,12 @@ test('buildPagePayload supplies safe defaults (slug->"", language->"en", missing
     metaDescription: '',
     language: 'en',
     templatePath: '',
+    headHtml: '',
+    footerHtml: '',
+    linkRelCanonicalUrl: '',
+    featuredImage: '',
+    featuredImageAltText: '',
+    useFeaturedImage: false,
   });
   // No undefined values leak into the HubSpot payload.
   for (const v of Object.values(p)) assert.notEqual(v, undefined);

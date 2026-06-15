@@ -252,10 +252,17 @@ function futurePublishDate(nowMs = Date.now()) {
 // The definition fields we create/update with. Intentionally a small allow-list
 // — this adapter does NOT push widgets/layoutSections (widgets adapter owns
 // those) nor any per-account/volatile field.
-const PUSH_FIELDS = ['templatePath', 'name', 'htmlTitle', 'metaDescription', 'slug', 'language'];
+// String fields pushed verbatim (after ref-resolve). headHtml/footerHtml/featuredImage
+// carry @logical refs that resolve() already swapped to target ids before push.
+const PUSH_FIELDS = [
+  'templatePath', 'name', 'htmlTitle', 'metaDescription', 'slug', 'language',
+  'headHtml', 'footerHtml', 'linkRelCanonicalUrl', 'featuredImage', 'featuredImageAltText',
+];
+// Boolean fields need their own default (not the '' string PUSH_FIELDS uses).
+const PUSH_BOOL_FIELDS = { useFeaturedImage: false };
 
 /**
- * buildPagePayload(def) -> { templatePath, name, htmlTitle, metaDescription, slug, language }
+ * buildPagePayload(def) -> create/update body.
  * Pure: project the create/update body from a canonical (refs-resolved) page
  * definition. `domain` is intentionally omitted so the page publishes onto the
  * target account's system domain (the prod host is never carried, codex §pages
@@ -267,6 +274,9 @@ export function buildPagePayload(def) {
     if (f === 'slug') out.slug = def.slug ?? '';
     else if (f === 'language') out.language = def.language ?? 'en';
     else out[f] = def[f] ?? '';
+  }
+  for (const [f, dflt] of Object.entries(PUSH_BOOL_FIELDS)) {
+    out[f] = def[f] ?? dflt;
   }
   if (typeof out.templatePath === 'string' && out.templatePath.startsWith('/')) {
     out.templatePath = out.templatePath.replace(/^\/+/, '');
