@@ -86,7 +86,7 @@ import {
   push as contentPush,
 } from '../../src/adapters/content.mjs';
 import { uploadAsset, uploadTarget, push as assetsPush } from '../../src/adapters/assets.mjs';
-import { push as pagesPush } from '../../src/adapters/pages.mjs';
+import { pull as pagesPull, push as pagesPush } from '../../src/adapters/pages.mjs';
 import { push as blogPush } from '../../src/adapters/blog.mjs';
 import { push as orchestratedPush, READ_ONLY_PORTAL } from '../../src/push.mjs';
 
@@ -221,39 +221,45 @@ test('forms: pull -> canonical name-keyed -> push upsert -> pull is byte-identic
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// content — home page widgets: pull -> push (PATCH draft) -> pull -> identical
+// content — home page widgets are EMBEDDED in <slug>.json (single source of truth).
+// The `pages` adapter PULLS the page file (definition + embedded, normalized widgets);
+// the `content` adapter PUSHES those embedded widgets (PATCH draft). Round-trip:
+//   pages.pull -> content.push -> pages.pull  must be byte-identical for home.json.
+// (content.pull is a no-op by design — pages owns the embedded map.)
 // ────────────────────────────────────────────────────────────────────────────
-test('content: home widgets pull -> push -> pull is byte-identical (dev)', { skip }, async () => {
+test('content: home widgets pull(pages) -> push(content) -> pull(pages) is byte-identical (dev)', { skip }, async () => {
   const acct = account('dev');
   assertDev(acct); // guard BEFORE the draft PATCH
 
   const dir1 = mkTmp('content-1');
   const dir2 = mkTmp('content-2');
   try {
-    // 1. PULL the home page (slug '') widgets into a fresh contentDir.
+    // content.pull is a no-op: it must touch no network and write no file.
+    const noop = await contentPull(acct, { contentDir: dir1, registry: emptyRegistry(acct.portalId) });
+    assert.equal(noop.pulled ?? 0, 0, 'content.pull is a no-op (pages owns embedded widgets)');
+
+    // 1. PULL the home page via the `pages` adapter -> dir1/pages/home.json with the
+    //    widgets EMBEDDED (and embedded refs tokenized to @form:<key> against reg1).
     const reg1 = emptyRegistry(acct.portalId);
-    await contentPull(acct, { contentDir: dir1, registry: reg1 });
-    const home1 = join(dir1, 'pages', 'home.widgets.json');
-    assert.ok(existsSync(home1), 'pulled home.widgets.json (slug "")');
+    await pagesPull(acct, { contentDir: dir1, registry: reg1 });
+    const home1 = join(dir1, 'pages', 'home.json');
+    assert.ok(existsSync(home1), 'pulled home.json (slug "")');
     const before = readFileSync(home1, 'utf8');
-    assert.ok(before.length > 0 && before.includes('"widgets"'), 'home widgets file is non-empty');
+    assert.ok(before.includes('"widgets"'), 'home page file carries an embedded widgets map');
 
-    // 2. PUSH the same canonical bytes back to dev. content.push resolves any embedded
-    //    logical refs (the live home page tokenizes a form GUID to @form:<key> on pull)
-    //    and PATCHes the home page DRAFT, then schedules a near-future publish. We reuse
-    //    the PULL registry — same-account round-trip resolves each @form/@asset ref back
-    //    to the identical dev guid/url it was pulled from (this is exactly how the
-    //    orchestrator threads one per-account registry through pull then push). Pushing
-    //    identical bytes is a no-op republish — converges, mutates no content.
+    // 2. PUSH the embedded widgets back to dev. content.push reads <slug>.json's widgets,
+    //    resolves logical refs (reusing the PULL registry so each @form/@asset resolves
+    //    back to the identical dev guid/url it was pulled from), PATCHes the home page
+    //    DRAFT, and schedules a near-future publish. Identical bytes => no-op republish.
     const pushRes = await contentPush(acct, { contentDir: dir1, registry: reg1 });
-    assert.ok((pushRes.pushed ?? 0) >= 1, 'pushed the home widgets draft');
+    assert.ok((pushRes.pushed ?? 0) >= 1, 'pushed the home widgets draft (from embedded home.json)');
 
-    // 3. PULL again into a fresh dir; bytes must be byte-identical (round-trip).
+    // 3. PULL again (pages) into a fresh dir; home.json must be byte-identical.
     const reg3 = emptyRegistry(acct.portalId);
-    await contentPull(acct, { contentDir: dir2, registry: reg3 });
-    const after = readFileSync(join(dir2, 'pages', 'home.widgets.json'), 'utf8');
+    await pagesPull(acct, { contentDir: dir2, registry: reg3 });
+    const after = readFileSync(join(dir2, 'pages', 'home.json'), 'utf8');
 
-    assert.equal(after, before, 'content pull -> push -> pull is byte-identical for home');
+    assert.equal(after, before, 'pages.pull -> content.push -> pages.pull is byte-identical for home');
   } finally {
     rmSync(dir1, { recursive: true, force: true });
     rmSync(dir2, { recursive: true, force: true });

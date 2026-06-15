@@ -1,4 +1,10 @@
 {
+  "slug": "",
+  "name": "Seventh Sense Home",
+  "htmlTitle": "Seventh Sense Home",
+  "metaDescription": "",
+  "language": "en",
+  "templatePath": "seventh-sense-theme/templates/home.html",
   "widgets": {
     "big_stats": {
       "body": {

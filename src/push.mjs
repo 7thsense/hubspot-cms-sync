@@ -71,7 +71,7 @@ export const READ_ONLY_PORTAL = '529456';
 // Sources scanned — EVERY canonical content file that can carry a @logical token,
 // found by RECURSIVELY walking each ref-bearing tree (so a new file dropped into a
 // scanned tree is covered automatically — no hand-maintained file list to drift):
-//   content/pages/**.json    (incl. *.widgets.json)
+//   content/pages/**.json    (page defs with embedded widgets)
 //   content/blog/**.json      EXCEPT the byte tree content/blog/assets/** — that
 //                             carrier-EXEMPT tree holds the blog adapter's committed
 //                             IMAGE BYTES (a @asset PRODUCER source), not tokens. This

@@ -1,20 +1,26 @@
 // Unit tests for sync/adapters/content.mjs — the page MODULE CONTENT (widgets)
 // adapter. PURE + network-mocked: no real HubSpot API. Run: node --test test/unit
 //
+// SINGLE SOURCE OF TRUTH: widgets are EMBEDDED in content/pages/<slug>.json (the same
+// file + carrier shape the `pages` adapter writes on pull). This adapter is PUSH-ONLY
+// for widgets; its pull() is a no-op because `pages` owns the embedded map.
+//
 // Coverage:
 //   1. The core invariant — widget canonicalize <-> resolve ROUND-TRIP using the real
-//      content/pages/home.widgets.json bytes and a two-account registry. Proves the
-//      embedded form GUID (home.widgets.json:743) survives pull (-> @form:key) and is
-//      restored on push (-> target GUID) byte-for-byte.
-//   2. pull(): walks the site-page list, fetches per-page detail, writes a canonical
-//      <slug>.widgets.json with the GUID logical-ized and the registry populated.
-//   3. push(): resolves logical refs to the target account, PATCHes the page draft
-//      (replace-not-merge, carrier empties intact), schedules publish; HARD-FAILS
-//      when a ref is unmapped; never targets a hardcoded portal.
+//      content/pages/home.json embedded-widget bytes and a two-account registry. Proves
+//      the embedded form GUID survives pull (-> @form:key) and is restored on push
+//      (-> target GUID) byte-for-byte.
+//   2. pull(): intentional no-op (the `pages` adapter writes embedded widgets).
+//   3. push(): reads embedded widgets from <slug>.json, resolves logical refs to the
+//      target account, PATCHes the page draft (replace-not-merge, carrier empties
+//      intact), schedules publish; HARD-FAILS when a ref is unmapped; never targets a
+//      hardcoded portal.
+//   4. Bidirectional provability: pages-pull(embed) -> content-push(read embed) is an
+//      identity at the carrier layer (shared idempotent normalizeWidgets).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +33,7 @@ import {
   resolve,
   listLogicalTokens,
 } from '../../src/lib/refs.mjs';
-import { normalizeWidgets, stableStringify } from '../../src/lib/canonical.mjs';
+import { normalizeWidgets, stableStringify, canonicalPage } from '../../src/lib/canonical.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(__dirname, '..', 'fixtures');
@@ -38,10 +44,12 @@ const FIXTURES = join(__dirname, '..', 'fixtures');
 // the pull-side canonicalize on *raw prod* bytes, we reconstitute the raw fixture by
 // resolving that token back to the prod GUID via a registry that maps demo -> GUID.
 const HOME_FORM_GUID = 'e6510401-3265-44d4-88d5-a3c5c4670311';
-const HOME_WIDGETS_PATH = join(FIXTURES, 'content', 'pages', 'home.widgets.json');
+// The committed home page file embeds its widgets under `widgets`; .widgets pulls the
+// carrier map out of the full page object (slug/name/.../widgets).
+const HOME_PAGE_PATH = join(FIXTURES, 'content', 'pages', 'home.json');
 const HOME_WIDGETS_RAW = JSON.parse(
   resolve(
-    readFileSync(HOME_WIDGETS_PATH, 'utf8'),
+    readFileSync(HOME_PAGE_PATH, 'utf8'),
     loadRegistry({ portalId: '529456', forms: { demo: HOME_FORM_GUID } }),
   ),
 );
@@ -157,36 +165,18 @@ function makeFetch({ pages, detail }, calls) {
   };
 }
 
-test('pull writes <slug>.widgets.json with the GUID logical-ized; skips AB + widgetless pages', async () => {
+test('pull is an intentional NO-OP (the `pages` adapter owns embedded widgets) — no network, no file writes', async () => {
   const dir = tmpDir();
-  const registry = emptyRegistry('529456');
+  mkdirSync(join(dir, 'pages'), { recursive: true });
   const orig = globalThis.fetch;
-  const calls = [];
-  globalThis.fetch = makeFetch(
-    {
-      pages: [
-        { id: '111', slug: '' }, // homepage, has widgets
-        { id: '222', slug: 'about' }, // no widgets -> skipped
-        { id: '333', slug: 'loser', abTestId: 'ab-9' }, // AB variant -> never fetched
-      ],
-      detail: {
-        111: HOME_WIDGETS_RAW, // full page detail carrying widgets
-        222: { id: '222', slug: 'about', widgets: {} },
-      },
-    },
-    calls,
-  );
+  let fetched = false;
+  globalThis.fetch = async () => { fetched = true; return { ok: false, status: 500, text: async () => '{}' }; };
   try {
-    const res = await pull(acct('529456'), { contentDir: dir, registry });
-    assert.equal(res.pulled, 1);
-
-    const out = readFileSync(join(dir, 'pages', 'home.widgets.json'), 'utf8');
-    assert.ok(!out.includes(HOME_FORM_GUID), 'pulled file must not carry the raw GUID');
-    assert.ok(out.includes('@form:'), 'pulled file carries a logical form token');
-    assert.equal(Object.keys(registry.forms).length, 1, 'registry populated on pull');
-
-    // AB variant id 333 was never fetched in detail.
-    assert.ok(!calls.some((c) => c.url.includes('site-pages/333')), 'AB variant not fetched');
+    const res = await pull(acct('529456'), { contentDir: dir, registry: emptyRegistry('529456') });
+    assert.equal(res.pulled, 0, 'pull pulls nothing of its own');
+    assert.equal(fetched, false, 'pull makes NO HubSpot calls');
+    assert.match(res.notes.join(' '), /embedded.*pages.*adapter/i, 'note points to the pages adapter');
+    assert.deepEqual(readdirSync(join(dir, 'pages')), [], 'pull writes no widgets file');
   } finally {
     globalThis.fetch = orig;
     rmSync(dir, { recursive: true, force: true });
@@ -197,14 +187,19 @@ test('pull writes <slug>.widgets.json with the GUID logical-ized; skips AB + wid
 // 3. push() with a mocked fetch — resolves to TARGET account, PATCHes draft + schedules.
 // ---------------------------------------------------------------------------
 
+// Write the canonical home PAGE file (content/pages/home.json) with its widgets
+// EMBEDDED and logical-ized (the on-disk committed form: @form:home-lead, no GUIDs) —
+// exactly what the `pages` adapter writes on pull and what push() now reads.
 function writeCanonicalHome(dir) {
   const pagesDir = join(dir, 'pages');
   mkdirSync(pagesDir, { recursive: true });
-  const canon = canonicalize(
-    stableStringify({ widgets: normalizeWidgets(HOME_WIDGETS_RAW.widgets) }),
-    srcRegistry(),
+  const widgets = JSON.parse(
+    canonicalize(stableStringify({ widgets: normalizeWidgets(HOME_WIDGETS_RAW.widgets) }), srcRegistry()),
+  ).widgets;
+  writeFileSync(
+    join(pagesDir, 'home.json'),
+    stableStringify({ slug: '', name: 'Home', templatePath: 'theme/templates/home.html', widgets }),
   );
-  writeFileSync(join(pagesDir, 'home.widgets.json'), canon);
 }
 
 test('push resolves logical refs to the target portal, PATCHes draft, and schedules', async () => {
@@ -286,18 +281,19 @@ test('push skips a widgets file whose slug has no page in the target account', a
 //    payload that blanks live content, and carrier empties must survive end-to-end.
 // ---------------------------------------------------------------------------
 
-// Write an arbitrary widgets object to <slug>.widgets.json (canonical bytes).
+// Write an arbitrary widgets object EMBEDDED in a page file content/pages/<stem>.json.
 function writeWidgetsFile(dir, slug, widgetsObj) {
   const pagesDir = join(dir, 'pages');
   mkdirSync(pagesDir, { recursive: true });
   const stem = slug === '' ? 'home' : slug.replace(/\//g, '__');
-  writeFileSync(join(pagesDir, `${stem}.widgets.json`), stableStringify({ widgets: widgetsObj }));
+  writeFileSync(join(pagesDir, `${stem}.json`), stableStringify({ slug, widgets: widgetsObj }));
 }
 
 test('push REFUSES to blank a live page: an empty widgets map is skipped, never PATCHed', async () => {
-  // A file that contains {"widgets":{}} would, under replace-not-merge, PATCH the
-  // draft with an empty carrier and wipe every widget on the live page. The adapter
-  // must treat this exactly like "no widgets to own" and skip it.
+  // A page file with {"widgets":{}} would, under replace-not-merge, PATCH the draft
+  // with an empty carrier and wipe every widget on the live page. This is ALSO the
+  // normal state of every template-only page (pages-pull writes widgets:{}), so the
+  // skip is SILENT (a per-page note would be noise) — but it must never PATCH.
   const dir = tmpDir();
   writeWidgetsFile(dir, '', {}); // empty carrier
   const orig = globalThis.fetch;
@@ -308,7 +304,26 @@ test('push REFUSES to blank a live page: an empty widgets map is skipped, never 
     assert.equal(res.pushed, 0, 'nothing pushed for an empty carrier');
     assert.ok(!calls.some((c) => c.method === 'PATCH'), 'NO draft PATCH — must not blank the page');
     assert.ok(!calls.some((c) => c.method === 'POST' && c.url.includes('/schedule')), 'no publish scheduled');
-    assert.ok(res.notes.some((n) => /empty|blank/i.test(n)), 'note explains the skip');
+  } finally {
+    globalThis.fetch = orig;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('push SKIPS a template-only page (no widgets key) silently — no PATCH, no note noise', async () => {
+  const dir = tmpDir();
+  const pagesDir = join(dir, 'pages');
+  mkdirSync(pagesDir, { recursive: true });
+  // A page definition with NO widgets key at all (e.g. about.json) — the common case.
+  writeFileSync(join(pagesDir, 'about.json'), stableStringify({ slug: 'about', name: 'About', templatePath: 'theme/templates/about.html' }));
+  const orig = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = makeFetch({ pages: [{ id: '800', slug: 'about' }], detail: {} }, calls);
+  try {
+    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry() });
+    assert.equal(res.pushed, 0);
+    assert.ok(!calls.some((c) => c.method === 'PATCH'), 'no PATCH for a widgetless page');
+    assert.ok(!res.notes.some((n) => /about/.test(n)), 'no per-page note for the common template-only case');
   } finally {
     globalThis.fetch = orig;
     rmSync(dir, { recursive: true, force: true });
@@ -444,14 +459,14 @@ function makeSchedulableFetch({ idForSlug, scheduleResult }, calls) {
   };
 }
 
-// Write a minimal non-empty widgets file for a slug (canonical bytes, no refs).
+// Write a minimal non-empty page file (embedded widgets, no refs) for a slug.
 function writeSimpleWidgets(dir, slug) {
   const pagesDir = join(dir, 'pages');
   mkdirSync(pagesDir, { recursive: true });
   const stem = slug === '' ? 'home' : slug.replace(/\//g, '__');
   writeFileSync(
-    join(pagesDir, `${stem}.widgets.json`),
-    stableStringify({ widgets: { hero: { name: 'hero', type: 'module', label: '', css: {}, child_css: {}, body: { text: slug } } } }),
+    join(pagesDir, `${stem}.json`),
+    stableStringify({ slug, widgets: { hero: { name: 'hero', type: 'module', label: '', css: {}, child_css: {}, body: { text: slug } } } }),
   );
 }
 
@@ -538,37 +553,43 @@ test('push schedule failure on the SECOND item throws and stops (does not silent
   }
 });
 
-test('pull KEEPS carrier empties (no empty-omit): pulled file retains css:{} and empty-string body fields', async () => {
-  // The pull pipeline must not run a generic empty-omit over the carrier (codex #8).
-  // Verify the written file still carries an empty css {} and an empty-string body
-  // field, so a later push won't send a thinner, page-blanking payload.
+// ---------------------------------------------------------------------------
+// 6. BIDIRECTIONAL PROVABILITY. The `pages` adapter writes embedded widgets on pull
+//    (canonicalPage -> normalizeWidgets); this adapter's push reads them back. Because
+//    both share the single idempotent normalizeWidgets, a value pulled-then-pushed is
+//    identical to the source carrier (no second normalizer to diverge). Carrier empties
+//    (css:{}, section_id:'') survive the full round trip.
+// ---------------------------------------------------------------------------
+test('bidirectional: pages-pull(embed) -> content-push(read embed) is a carrier-layer identity (empties survive)', async () => {
+  // 1. PULL side (pages adapter): a raw HubSpot page -> canonical page file with
+  //    embedded, normalized widgets. This is exactly what lands on disk as <slug>.json.
+  const rawHubPage = {
+    id: '111', slug: '', name: 'Home', templatePath: 'theme/templates/home.html',
+    widgets: {
+      hero: { name: 'hero', type: 'module', label: '', css: {}, child_css: {}, body: { headline: 'Hi', section_id: '' } },
+    },
+  };
+  const pageFile = canonicalPage(rawHubPage); // pages-adapter pull output (embedded widgets)
+
   const dir = tmpDir();
-  const registry = emptyRegistry('529456');
+  mkdirSync(join(dir, 'pages'), { recursive: true });
+  writeFileSync(join(dir, 'pages', 'home.json'), stableStringify(pageFile));
+
+  // 2. PUSH side (this adapter): read the embedded widgets back and PATCH them.
   const orig = globalThis.fetch;
   const calls = [];
-  globalThis.fetch = makeFetch(
-    {
-      pages: [{ id: '111', slug: '' }],
-      detail: {
-        111: {
-          id: '111',
-          slug: '',
-          widgets: {
-            hero: { name: 'hero', type: 'module', label: '', css: {}, child_css: {}, body: { headline: 'Hi', section_id: '' } },
-          },
-        },
-      },
-    },
-    calls,
-  );
+  globalThis.fetch = makeFetch({ pages: [{ id: '700', slug: '' }], detail: {} }, calls);
   try {
-    const res = await pull(acct('529456'), { contentDir: dir, registry });
-    assert.equal(res.pulled, 1);
-    const out = JSON.parse(readFileSync(join(dir, 'pages', 'home.widgets.json'), 'utf8'));
-    assert.deepEqual(out.widgets.hero.css, {}, 'empty css preserved on pull (not omitted)');
-    assert.deepEqual(out.widgets.hero.child_css, {}, 'empty child_css preserved on pull');
-    assert.equal(out.widgets.hero.body.section_id, '', 'empty-string body field preserved on pull');
-    assert.ok('label' in out.widgets.hero, 'empty label key preserved on pull');
+    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry() });
+    assert.equal(res.pushed, 1);
+    const sent = JSON.parse(calls.find((c) => c.method === 'PATCH').body).widgets;
+    // IDENTITY: what push sends equals the source carrier the pages adapter wrote —
+    // normalizeWidgets is idempotent, so no field is added, dropped, or reshaped.
+    assert.deepEqual(sent, pageFile.widgets, 'push carrier === pages-pull embedded carrier (round-trip identity)');
+    // Empties specifically survive the whole path (codex #8 replace-not-merge).
+    assert.deepEqual(sent.hero.css, {}, 'empty css survives pull->push');
+    assert.equal(sent.hero.body.section_id, '', 'empty-string body field survives pull->push');
+    assert.ok('label' in sent.hero, 'empty label key survives pull->push');
   } finally {
     globalThis.fetch = orig;
     rmSync(dir, { recursive: true, force: true });

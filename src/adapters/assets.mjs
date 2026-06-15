@@ -17,7 +17,7 @@
 //   registry key, and the `@asset:` token are the same string and round-trip.
 //
 // PULL  (read source acct -> write canonical bytes + register source URLs):
-//   1. scan canonical content (pages/*.json, pages/*.widgets.json, blog/**)
+//   1. scan canonical content (pages/*.json incl. embedded widgets, blog/**)
 //      for `@asset:<path>` tokens — these were produced by refs.canonicalize.
 //   2. for each path, find a downloadable URL ON THE SOURCE ACCOUNT
 //      (File Manager search by name, hubfs reconstruction fallback) and
@@ -257,7 +257,7 @@ export function saveRehosted(portalId, map) {
 
 // ───────────────────────────────────────────────────────────────────────────
 // Scan the committed canonical tree for `@asset:` references.
-// Sources: content/pages/*.json (+ *.widgets.json), content/blog/** *.json.
+// Sources: content/pages/*.json (widgets are embedded), content/blog/** *.json.
 // theme/templates are ALSO @asset carriers, but the assets they reference are
 // likewise tokenized; reading every *.json under contentDir covers pages+blog,
 // and the optional `extraDirs` lets the orchestrator widen the scan.

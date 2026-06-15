@@ -7,15 +7,25 @@
 // won't serialize as HubL tag params (rich text / HTML). It is the canonicalized,
 // account-agnostic successor to the proven sync/page-content.mjs one-shot script.
 //
+// SINGLE SOURCE OF TRUTH — widgets are EMBEDDED in content/pages/<slug>.json:
+//   The page's module content lives under the `widgets` key of its own page file,
+//   the SAME file (and SAME normalized carrier shape) the `pages` adapter writes on
+//   pull via canonicalPage -> normalizeWidgets. There is NO separate <slug>.widgets.json
+//   — one file per page, read by BOTH publishing targets (this adapter for HubSpot,
+//   build-static for the static target). A standalone widgets file was a second
+//   pull-writer for the same content and drifted; this design removes it.
+//
 // SEPARATION OF CONCERNS:
 //   - The page DEFINITION (slug, name, htmlTitle, templatePath, ...) is the `pages`
-//     adapter's job. This adapter touches ONLY the widgets map on an existing page,
-//     identified by SLUG. It never creates pages (pages.push does) — it resolves a
-//     page id by slug at push time and PATCHes its draft.
+//     adapter's job; that adapter OWNS content/pages/<slug>.json end-to-end on pull
+//     (definition + embedded widgets). This adapter is PUSH-ONLY for widgets: the
+//     `pages` adapter deliberately does NOT push the widgets map, so we do. We touch
+//     ONLY the widgets map on an existing page, identified by SLUG; we never create
+//     pages (pages.push does) — we resolve a page id by slug and PATCH its draft.
 //   - Reference portability (form GUIDs, CTA guids, hosted asset URLs, bare portal
 //     ids embedded inside widget body strings) is delegated wholesale to
-//     sync/lib/refs.mjs. home.widgets.json:743 carries a raw `form_id` GUID; on pull
-//     that becomes `@form:<key>`, on push it is resolved to the TARGET account's GUID.
+//     sync/lib/refs.mjs. The embedded `widgets` carry logical tokens (`@form:<key>`);
+//     on push each is resolved to the TARGET account's GUID.
 //
 // CANONICAL CONTRACT (codex #8 — keep widget-carrier empties, replace-not-merge):
 //   normalizeWidgets() in canonical.mjs deliberately KEEPS empty css/child_css/label
@@ -25,21 +35,23 @@
 //   empty-omit over the carrier. stableStringify gives the diff-clean bytes; refs
 //   canonicalize/resolve only swap id substrings, so the JSON stays valid + stable.
 //
-// ROUND-TRIP (pull -> push -> pull converges): pull writes
-//   stableStringify({ widgets: normalizeWidgets(raw) })  then  canonicalize(str, reg)
-// push does the inverse: resolve(fileBytes, reg) -> parse -> PATCH draft -> schedule.
-// Because canonicalize/resolve are exact string inverses for matched logical keys and
-// stableStringify is idempotent, bytes converge.
+// ROUND-TRIP (pull -> push -> pull converges, PROVABLY): the `pages` adapter pull
+// writes the embedded widgets as  normalizeWidgets(raw)  into <slug>.json. This adapter
+// push reads that SAME embedded map, runs  resolve(stableStringify({widgets}), reg) ->
+// parse -> PATCH draft -> schedule. normalizeWidgets is idempotent and canonicalize/
+// resolve are exact string inverses for matched logical keys, so a value pulled then
+// pushed then pulled again is byte-identical. (Both sides share normalizeWidgets, so
+// there is no second normalizer that could diverge.)
 //
 // READ-ONLY PROD: this adapter never hardcodes a portal; the orchestrator passes
 // `acct`. push() targets whatever `acct` it is given (prod is excluded upstream).
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { hub, getAll, resolvePageBySlug } from '../lib/hub.mjs';
-import { stableStringify, normalizeWidgets, slugToFile, fileToSlug } from '../lib/canonical.mjs';
-import { canonicalize, resolve } from '../lib/refs.mjs';
+import { hub, resolvePageBySlug } from '../lib/hub.mjs';
+import { stableStringify, normalizeWidgets, fileToSlug } from '../lib/canonical.mjs';
+import { resolve } from '../lib/refs.mjs';
 
 export const name = 'content';
 
@@ -57,74 +69,30 @@ const WIDGETS_SUFFIX = '.widgets.json';
 const PUBLISH_LEAD_MS = 90_000;
 
 // ---------------------------------------------------------------------------
-// Page selection (pull): exclude AB variants and any page without a widgets map.
-// A page with no instance-editable modules has nothing for THIS adapter to own.
+// pull(acct, ctx) -> { pulled: 0, notes }
+//
+// INTENTIONAL NO-OP. The page's widgets are embedded in content/pages/<slug>.json,
+// which the `pages` adapter OWNS on pull: its canonicalPage() projects
+// normalizeWidgets(raw.widgets) into the page file AND canonicalize()s the embedded
+// refs into the registry. Having THIS adapter also fetch + write the same widgets
+// (to a separate file) is exactly the dual-writer drift this design removes. Push
+// still reads those embedded widgets, so the pull -> push round-trip is intact —
+// the pull half just belongs to the `pages` adapter now.
 // ---------------------------------------------------------------------------
-function isABVariant(page) {
-  if (page.abTestId) return true;
-  const st = String(page.currentState || page.state || '');
-  return st === 'LOSER_AB_VARIANT' || st === 'DRAFT_AB' || st === 'AB';
-}
-
-function hasWidgets(page) {
-  return page && page.widgets && typeof page.widgets === 'object' && Object.keys(page.widgets).length > 0;
-}
-
-// Build the canonical, account-portable widgets file CONTENT (a string) for one page.
-// Steps: project to carrier-only widgets (keeps empties), stable-stringify for a clean
-// diff, then logical-ize embedded refs (form GUID -> @form:key, etc.) via the registry,
-// which also REGISTERS any newly-seen ids so first pull is self-bootstrapping.
-function canonicalWidgetsFile(rawPage, registry) {
-  const widgets = normalizeWidgets(rawPage.widgets);
-  const bytes = stableStringify({ widgets });
-  return canonicalize(bytes, registry);
-}
-
-function widgetsPath(contentDir, slug) {
-  return join(contentDir, PAGES_SUBDIR, `${slugToFile(slug)}${WIDGETS_SUFFIX}`);
-}
-
-// ---------------------------------------------------------------------------
-// pull(acct, { contentDir, registry }) -> { pulled, notes }
-// For every live, non-AB site page that carries module-instance values, fetch the
-// full page (the list endpoint omits widgets), canonicalize, and write
-// content/pages/<slug>.widgets.json. Registers any embedded refs into `registry`.
-// ---------------------------------------------------------------------------
-export async function pull(acct, { contentDir, registry }) {
-  const notes = [];
-  const outDir = join(contentDir, PAGES_SUBDIR);
-  mkdirSync(outDir, { recursive: true });
-
-  const list = await getAll(acct, '/cms/v3/pages/site-pages');
-  const candidates = list.filter((p) => !isABVariant(p));
-
-  let pulled = 0;
-  for (const summary of candidates) {
-    const id = String(summary.id);
-    // The list payload omits `widgets`; fetch the full page to get the carrier map.
-    const { ok, status, json } = await hub(acct, 'GET', `/cms/v3/pages/site-pages/${id}`);
-    if (!ok) {
-      notes.push(`skip page ${id} (${summary.slug ?? ''}): GET -> ${status}`);
-      continue;
-    }
-    if (!hasWidgets(json)) continue; // no instance-editable modules -> nothing to own
-
-    const slug = String(json.slug ?? summary.slug ?? '');
-    const file = canonicalWidgetsFile(json, registry);
-    writeFileSync(widgetsPath(contentDir, slug), file);
-    pulled += 1;
-  }
-
-  notes.push(`pulled ${pulled} page widget file(s) from ${candidates.length} non-AB page(s)`);
-  return { pulled, notes };
+export async function pull() {
+  return {
+    pulled: 0,
+    notes: ['widgets are embedded in content/pages/<slug>.json (owned by the `pages` adapter); nothing to pull separately'],
+  };
 }
 
 // ---------------------------------------------------------------------------
 // push(acct, { contentDir, registry }) -> { pushed, notes }
-// For each content/pages/<slug>.widgets.json: resolve embedded logical refs to THIS
-// account's ids/urls (HARD-FAILS via resolve() if any ref is unmapped), resolve the
-// page id by slug, PATCH the page draft with the full widgets carrier (replace-not-
-// merge), then schedule a near-future publish so the draft goes live.
+// For each content/pages/<slug>.json carrying a non-empty embedded `widgets` map:
+// resolve embedded logical refs to THIS account's ids/urls (HARD-FAILS via resolve()
+// if any ref is unmapped), resolve the page id by slug, PATCH the page draft with the
+// full widgets carrier (replace-not-merge), then schedule a near-future publish so the
+// draft goes live. Standalone <slug>.widgets.json files (legacy) are ignored.
 // Idempotent: PATCH draft + schedule by stable identity (slug -> page id) — running
 // twice converges to the same draft+publish.
 // ---------------------------------------------------------------------------
@@ -136,33 +104,42 @@ export async function push(acct, { contentDir, registry }) {
     return { pushed: 0, notes };
   }
 
-  const files = readdirSync(dir).filter((f) => f.endsWith(WIDGETS_SUFFIX));
+  // Source of truth: the embedded `widgets` of each page file. Skip standalone
+  // legacy <slug>.widgets.json (no longer emitted) so a page is never double-owned.
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith('.json') && !f.endsWith(WIDGETS_SUFFIX))
+    .sort();
   let pushed = 0;
   for (const fname of files) {
-    const stem = fname.slice(0, -WIDGETS_SUFFIX.length);
-    const slug = fileToSlug(stem);
+    // 1. Read the page file and project its embedded widgets to the canonical carrier
+    //    (normalizeWidgets keeps the load-bearing empties; idempotent — the `pages`
+    //    adapter wrote these with the same function). A page with no widgets is a
+    //    plain template-only page and is simply skipped (NOT an empty PATCH — see #2).
+    let page;
+    try {
+      page = JSON.parse(readFileSync(join(dir, fname), 'utf8'));
+    } catch (e) {
+      throw new Error(`content.push: ${fname} is not valid JSON: ${e.message}`);
+    }
+    const widgetsRaw = normalizeWidgets(page.widgets);
+    // DATA-LOSS GUARD (replace-not-merge): an empty widgets map would PATCH the draft
+    // with `widgets: {}`, and because HubSpot REPLACES the whole carrier that BLANKS
+    // every widget on the live page. A page with no instance-editable modules has
+    // nothing for THIS adapter to own — skip it silently (the common case: every
+    // template-only page), never emit an empty PATCH.
+    if (Object.keys(widgetsRaw).length === 0) continue;
 
-    // 1. Read canonical bytes and inject target ids. resolve() THROWS listing every
-    //    unmapped logical ref — a missing form/cta/asset mapping must abort the push.
-    const raw = readFileSync(join(dir, fname), 'utf8');
-    const resolved = resolve(raw, registry); // throws on unmapped refs
+    const slug = page.slug == null ? fileToSlug(fname.replace(/\.json$/, '')) : String(page.slug);
+
+    // 1b. Inject target ids. resolve() THROWS listing every unmapped logical ref — a
+    //     missing form/cta/asset mapping must abort the push (never a partial blank).
     let widgets;
     try {
-      widgets = JSON.parse(resolved).widgets;
+      widgets = JSON.parse(resolve(stableStringify({ widgets: widgetsRaw }), registry)).widgets;
     } catch (e) {
-      throw new Error(`content.push: ${fname} is not valid JSON after ref-resolve: ${e.message}`);
-    }
-    if (!widgets || typeof widgets !== 'object') {
-      notes.push(`skip ${fname}: no widgets object`);
-      continue;
-    }
-    // DATA-LOSS GUARD (replace-not-merge): an empty widgets map would PATCH the
-    // draft with `widgets: {}`, and because HubSpot REPLACES the whole carrier
-    // that BLANKS every widget on the live page. A file with no widgets has
-    // nothing to own (mirrors pull's hasWidgets skip) — never emit an empty PATCH.
-    if (Object.keys(widgets).length === 0) {
-      notes.push(`skip ${fname}: widgets map is empty (refusing to blank the live page)`);
-      continue;
+      // A ref-resolve failure is a hard error (re-throw); JSON.parse here cannot fail
+      // because stableStringify produced the bytes, but keep the slug in any message.
+      throw new Error(`content.push: ${fname} (slug "${slug}"): ${e.message}`);
     }
 
     // 2. Resolve the page id by slug. The page DEFINITION must already exist (pages
@@ -206,7 +183,7 @@ export async function push(acct, { contentDir, registry }) {
     pushed += 1;
   }
 
-  notes.push(`pushed ${pushed} page widget file(s) to portal ${acct.portalId}`);
+  notes.push(`pushed ${pushed} page widget map(s) (from embedded <slug>.json) to portal ${acct.portalId}`);
   return { pushed, notes };
 }
 
