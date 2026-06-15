@@ -290,11 +290,49 @@ export function formatReport({ accounts }, { cap = 40 } = {}) {
   return lines.join('\n');
 }
 
-export async function main(accountNames, { config } = {}) {
+// emitDeletions(report, { surfaces }) -> deletions.csv text
+// Turn an account's ORPHANS (live on the account, not in git) into a managed deletions
+// list (surface,key,reason) ready for `hcms delete`. Defaults to page surfaces — the
+// "old pages to remove" of a clean-slate; blog-posts/redirects are excluded by default
+// because an orphan there is more likely content to KEEP/migrate than to delete. The
+// operator REVIEWS + trims the file; nothing is deleted by generating it.
+const DEFAULT_DELETION_SURFACES = ['site-pages', 'landing-pages', 'menus'];
+
+export function emitDeletions(accountReport, { surfaces = DEFAULT_DELETION_SURFACES } = {}) {
+  const lines = [
+    '# Clean-slate deletions — generated from `hcms reconcile --emit-deletions`.',
+    `# Source: ${accountReport.name} (portal ${accountReport.portalId}). REVIEW before applying.`,
+    '# Each row is a LIVE item on the account that is NOT in git. Delete = remove at cutover.',
+    '# Apply with: hcms delete <account> --apply  (prod requires HCMS_ALLOW_PROD_PUSH=1).',
+    'surface,key,reason',
+  ];
+  let count = 0;
+  for (const s of accountReport.surfaces) {
+    if (!surfaces.includes(s.surface)) continue;
+    for (const o of s.orphans) {
+      lines.push(`${s.surface},${o.key},orphan (live on ${accountReport.name}, not in git)`);
+      count += 1;
+    }
+  }
+  return { text: `${lines.join('\n')}\n`, count };
+}
+
+export async function main(accountNames, { config, emitDeletionsFile, surfaces } = {}) {
   if (!accountNames || accountNames.length === 0) {
     throw new Error('reconcile: at least one account name is required');
   }
   const report = await reconcile(accountNames, { config });
   console.log(formatReport(report));
+
+  if (emitDeletionsFile) {
+    if (accountNames.length !== 1) {
+      throw new Error('reconcile --emit-deletions: pass exactly ONE account (the one to clean-slate)');
+    }
+    const opts = surfaces ? { surfaces: surfaces.split(',').map((x) => x.trim()).filter(Boolean) } : {};
+    const { text, count } = emitDeletions(report.accounts[0], opts);
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(emitDeletionsFile, text);
+    console.log(`\nWrote ${count} deletion candidate(s) -> ${emitDeletionsFile} (REVIEW before \`hcms delete\`).`);
+  }
   return report;
 }

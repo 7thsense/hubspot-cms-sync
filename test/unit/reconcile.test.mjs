@@ -4,7 +4,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { classifySurface, SURFACES, reconcile, formatReport, redirectPath, probeUnsupported } from '../../src/reconcile.mjs';
+import { classifySurface, SURFACES, reconcile, formatReport, redirectPath, probeUnsupported, emitDeletions } from '../../src/reconcile.mjs';
+
+test('emitDeletions: turns page/landing/menu orphans into a deletions.csv (excludes posts by default)', () => {
+  const accountReport = {
+    name: 'prod', portalId: '529456',
+    surfaces: [
+      { surface: 'site-pages', orphans: [{ key: 'team' }, { key: 'how' }], missing: [] },
+      { surface: 'landing-pages', orphans: [{ key: 'inbound25' }], missing: [] },
+      { surface: 'blog-posts', orphans: [{ key: 'blog/keep-me' }], missing: [] }, // excluded by default
+    ],
+  };
+  const { text, count } = emitDeletions(accountReport);
+  assert.equal(count, 3, 'pages + landing + (no menus here) — posts excluded');
+  assert.match(text, /site-pages,team,/);
+  assert.match(text, /landing-pages,inbound25,/);
+  assert.ok(!text.includes('blog/keep-me'), 'blog-post orphans are NOT auto-listed for deletion');
+  assert.match(text, /surface,key,reason/, 'has the deletions.csv header');
+});
 
 test('probeUnsupported: flags a non-empty surface and a 403 (missing scope), not an empty one', async () => {
   const hub = async (acct, method, path) => {

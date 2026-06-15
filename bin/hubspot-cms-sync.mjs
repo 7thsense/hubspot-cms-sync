@@ -167,9 +167,11 @@ async function main(argv = process.argv) {
     .command('reconcile')
     .description('read-only cross-account orphan/missing report (git vs HubSpot)')
     .argument('<accounts...>', 'one or more account names (e.g. prod dev)')
-    .action(async (accounts) => {
+    .option('--emit-deletions <file>', 'write orphans as a deletions.csv clean-slate list (one account; read-only)')
+    .option('--surfaces <list>', 'comma-separated surfaces for --emit-deletions (default site-pages,landing-pages,menus)')
+    .action(async (accounts, options) => {
       const config = await withConfig(program.opts());
-      await reconcileMain(accounts, { config });
+      await reconcileMain(accounts, { config, emitDeletionsFile: options.emitDeletions, surfaces: options.surfaces });
     });
 
   program

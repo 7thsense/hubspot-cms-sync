@@ -79,6 +79,28 @@ test('syncDeletions --apply deletes ONLY listed items, idempotent on 404', async
   assert.equal(res.counts.delete, 1);
 });
 
+test('syncDeletions: flags a page deletion with NO redirect (404-at-cutover guard)', async () => {
+  const getAll = async (acct, path) => {
+    if (path.includes('site-pages')) return [
+      { slug: 'team', id: '111', currentState: 'PUBLISHED' },
+      { slug: 'how', id: '222', currentState: 'PUBLISHED' },
+    ];
+    if (path.includes('url-redirects')) return [{ routePrefix: 'http://www.x.com/team', destination: '/t' }]; // covers /team only
+    return [];
+  };
+  const hub = async () => ({ ok: true, status: 200, json: {} });
+  const readSpecs = () => [
+    { surface: 'site-pages', key: 'team', reason: '' },
+    { surface: 'site-pages', key: 'how', reason: '' },
+  ];
+  const res = await syncDeletions('dev', { config: { readOnlyPortalIds: ['529456'] } },
+    { account: () => acct('dev', '246389711'), getAll, hub, readSpecs });
+  const team = res.plan.find((p) => p.key === 'team');
+  const how = res.plan.find((p) => p.key === 'how');
+  assert.equal(team.redirectCovered, true, '/team has a redirect');
+  assert.equal(how.redirectCovered, false, '/how has NO redirect -> would 404');
+});
+
 test('syncDeletions --apply REFUSES a read-only (prod) portal', async () => {
   const readSpecs = () => [{ surface: 'site-pages', key: 'team' }];
   await assert.rejects(

@@ -21,7 +21,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { account as realAccount, getAll as realGetAll, hub as realHub } from './lib/hub.mjs';
-import { SURFACE_BY_KEY } from './reconcile.mjs';
+import { SURFACE_BY_KEY, redirectPath, buildGitIndex } from './reconcile.mjs';
+
+// Page surfaces whose deletion should be covered by a redirect (else a live URL 404s
+// at cutover). Posts/tags/authors/menus are not URL-bearing in the same way.
+const REDIRECTED_SURFACES = new Set(['site-pages', 'landing-pages']);
 
 const READ_ONLY_PORTAL = '529456';
 
@@ -131,6 +135,34 @@ export async function syncDeletions(name, options = {}, deps = {}) {
 
   const plan = planDeletions(specs, inventoryBySurface, surfaceByKey);
 
+  // REDIRECT-COVERAGE GUARD: a page being deleted should have a redirect from its path,
+  // or the URL 404s at cutover. Annotate each page deletion with redirectCovered so the
+  // report can warn. Read-only (fetches the account's redirects once if needed).
+  const needsCoverage = plan.some((p) => p.action === 'delete' && REDIRECTED_SURFACES.has(p.surface));
+  if (needsCoverage) {
+    let redirectCovered = new Set();
+    try {
+      const redirects = await getAll(acct, '/cms/v3/url-redirects');
+      redirectCovered = new Set(redirects.map((r) => redirectPath(r.routePrefix ?? r.url ?? '')));
+    } catch { /* can't read redirects -> treat as uncovered (warn) */ }
+    // A NEW git page at the same slug also covers the path (the redesign serves it after
+    // cutover) — that's not a 404, so it shouldn't be flagged. Read the git page sets.
+    let gitPaths = new Set();
+    if (config?.contentDirPath) {
+      try {
+        const gi = await buildGitIndex(config);
+        gitPaths = new Set([...(gi['site-pages'] || []), ...(gi['landing-pages'] || [])].map((s) => `/${String(s).replace(/^\//, '')}`));
+      } catch { /* no git tree -> only redirects count */ }
+    }
+    for (const p of plan) {
+      if (p.action === 'delete' && REDIRECTED_SURFACES.has(p.surface)) {
+        const path = `/${String(p.key).replace(/^\//, '')}`;
+        p.redirectCovered = redirectCovered.has(path) || gitPaths.has(path);
+        p.coveredByNewPage = !redirectCovered.has(path) && gitPaths.has(path);
+      }
+    }
+  }
+
   if (apply) {
     for (const item of plan) {
       if (item.action !== 'delete') continue;
@@ -163,9 +195,17 @@ export function renderDeletionReport(result) {
   const verb = result.apply ? 'DELETED' : 'WOULD DELETE (dry-run — pass --apply to execute)';
   lines.push(`deletions for ${result.account} (portal ${result.portalId}) from ${result.file}`);
   lines.push(`${verb}: ${result.counts.delete}   absent (already gone / no match): ${result.counts.absent}`);
+  const uncovered = result.plan.filter((p) => p.action === 'delete' && p.redirectCovered === false);
   for (const item of result.plan) {
     const mark = item.action === 'delete' ? (result.apply ? '✓ deleted' : '• will delete') : '· absent';
-    lines.push(`  ${mark}  ${item.surface}/${item.key}${item.reason ? `  (${item.reason})` : ''}`);
+    let cov = '';
+    if (item.redirectCovered === false) cov = '  ⚠ NO REDIRECT (would 404 at cutover)';
+    else if (item.coveredByNewPage) cov = '  (path served by a new git page — ok)';
+    lines.push(`  ${mark}  ${item.surface}/${item.key}${item.reason ? `  (${item.reason})` : ''}${cov}`);
+  }
+  if (uncovered.length) {
+    lines.push(`\n⚠ ${uncovered.length} page deletion(s) have NO redirect — add redirects (sync/redirects.csv) before cutover so old URLs don't 404:`);
+    for (const u of uncovered) lines.push(`    /${String(u.key).replace(/^\//, '')}`);
   }
   return lines.join('\n');
 }
