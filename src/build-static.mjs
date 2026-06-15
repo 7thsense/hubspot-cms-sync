@@ -166,10 +166,13 @@ export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '
     redirectCount = lines.length;
   }
 
+  // /assets/* are content-hashed, so immutable is safe. css/js use STABLE filenames, so
+  // immutable would pin stale styles at the edge for a year after a deploy — they must
+  // revalidate instead (cheap 304s) so CSS/JS fixes actually reach users.
   await writeFile(join(outDir, '_headers'),
     '/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n'
-    + '/css/*\n  Cache-Control: public, max-age=31536000, immutable\n'
-    + '/js/*\n  Cache-Control: public, max-age=31536000, immutable\n'
+    + '/css/*\n  Cache-Control: public, max-age=0, must-revalidate\n'
+    + '/js/*\n  Cache-Control: public, max-age=0, must-revalidate\n'
     + '/*\n  X-Content-Type-Options: nosniff\n  X-Frame-Options: SAMEORIGIN\n  Referrer-Policy: strict-origin-when-cross-origin\n',
     'utf8');
 
