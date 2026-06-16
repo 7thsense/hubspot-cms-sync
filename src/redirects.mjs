@@ -171,6 +171,120 @@ export function planRedirects(specs, existing) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// RECONCILE mode (prod cutover). HubSpot accounts accumulate years of legacy
+// url-redirects stored as full `scheme://host/path` URLs across subdomains. A
+// clean managed redirects.csv (path-form) collides with them: same-source stale
+// mappings shadow ours, and reverse mappings (dest -> source) make HubSpot reject
+// our creates as redirect loops. Reconcile resolves this for OUR managed routes
+// ONLY, touching just path-form and www.theseventhsense.com entries (the scope
+// where our pages actually serve); legacy entries on other subdomains are left
+// untouched. Two rules:
+//   A. a managed DESTINATION must resolve, so delete any in-scope redirect whose
+//      source path is one of our destinations (removes reverse-loops + shadows).
+//   B. a managed SOURCE must redirect to our destination, so update the governing
+//      in-scope mapping (deleting any duplicate in-scope mappings that would shadow
+//      it) or create one if none exists.
+// ---------------------------------------------------------------------------
+
+export const PRIMARY_REDIRECT_HOST = 'www.theseventhsense.com';
+
+// Reduce a routePrefix/destination to a comparable site path: strip scheme+host,
+// ensure a single leading slash, preserve the rest (trailing slash is significant —
+// /x and /x/ are distinct managed routes). Already-path values pass through.
+export function normalizeRedirectPath(value) {
+  let s = String(value ?? '').trim();
+  if (!s) return '';
+  const m = s.match(/^[a-z][a-z0-9+.-]*:\/\/[^/]+(\/.*)?$/i);
+  if (m) s = m[1] || '/';
+  if (!s.startsWith('/')) s = `/${s}`;
+  return s;
+}
+
+// In-scope = an entry our pages can actually shadow/loop with: path-form, or hosted
+// on the primary public domain. Other subdomains (mktg/get/sandbox) are left alone.
+export function isInRedirectScope(routePrefix) {
+  const rp = String(routePrefix ?? '').trim();
+  if (rp.startsWith('/')) return true;
+  const m = rp.match(/^[a-z][a-z0-9+.-]*:\/\/([^/]+)/i);
+  return !!m && m[1].toLowerCase() === PRIMARY_REDIRECT_HOST;
+}
+
+// Prefer the path-form entry as the one to keep/update, then the primary-host entry.
+function preferGoverning(a, b) {
+  const aPath = String(a.routePrefix ?? '').startsWith('/');
+  const bPath = String(b.routePrefix ?? '').startsWith('/');
+  if (aPath !== bPath) return aPath ? a : b;
+  return a; // stable: first wins
+}
+
+export function planRedirectsReconcile(specs, existing) {
+  const seenSpecs = new Set();
+  for (const spec of specs) {
+    if (seenSpecs.has(spec.routePrefix)) throw new Error(`duplicate managed redirect routePrefix "${spec.routePrefix}"`);
+    seenSpecs.add(spec.routePrefix);
+  }
+
+  const managedSources = new Set(specs.map((s) => normalizeRedirectPath(s.routePrefix)));
+  // Destinations that must resolve as live pages. Root '/' is excluded — we never
+  // blind-delete root redirects.
+  const managedDests = new Set(
+    specs.map((s) => normalizeRedirectPath(s.destination)).filter((p) => p && p !== '/' && !managedSources.has(p)),
+  );
+
+  const inScope = existing.filter((r) => isInRedirectScope(r.routePrefix));
+  const deletions = [];
+  const deletedIds = new Set();
+
+  // Rule A: drop in-scope redirects pointing away from a managed destination.
+  for (const r of inScope) {
+    const srcPath = normalizeRedirectPath(r.routePrefix);
+    if (managedDests.has(srcPath)) {
+      deletions.push({ action: 'delete', id: String(r.id), current: r, reason: 'destination-must-resolve' });
+      deletedIds.add(String(r.id));
+    }
+  }
+
+  // Rule B: one governing redirect per managed source.
+  const upserts = [];
+  for (const spec of specs) {
+    const srcPath = normalizeRedirectPath(spec.routePrefix);
+    const candidates = inScope.filter(
+      (r) => normalizeRedirectPath(r.routePrefix) === srcPath && !deletedIds.has(String(r.id)),
+    );
+    if (candidates.length === 0) {
+      upserts.push({ action: 'create', spec, body: payloadFor(spec) });
+      continue;
+    }
+    const governing = candidates.reduce(preferGoverning);
+    // Any other in-scope candidate would shadow the governing one — remove it.
+    for (const r of candidates) {
+      if (String(r.id) !== String(governing.id) && !deletedIds.has(String(r.id))) {
+        deletions.push({ action: 'delete', id: String(r.id), current: r, reason: 'shadow-duplicate' });
+        deletedIds.add(String(r.id));
+      }
+    }
+    const wantDest = normalizeRedirectPath(spec.destination);
+    const haveDest = normalizeRedirectPath(governing.destination);
+    const styleMatches = String(governing.redirectStyle) === String(spec.redirectStyle);
+    if (wantDest === haveDest && styleMatches) {
+      upserts.push({ action: 'unchanged', id: String(governing.id), spec, current: governing });
+    } else {
+      upserts.push({
+        action: 'update',
+        id: String(governing.id),
+        spec,
+        current: governing,
+        body: { destination: spec.destination, redirectStyle: spec.redirectStyle },
+        changedFields: ['destination', 'redirectStyle'],
+      });
+    }
+  }
+
+  // Deletes execute first so creates/updates can't loop against a stale mapping.
+  return [...deletions, ...upserts];
+}
+
 function readOnlySet(config) {
   return new Set((config?.readOnlyPortalIds?.length ? config.readOnlyPortalIds : [READ_ONLY_PORTAL]).map(String));
 }
@@ -178,6 +292,7 @@ function readOnlySet(config) {
 export async function syncRedirects(name, options = {}, deps = {}) {
   const {
     apply = false,
+    reconcile = false,
     file,
     config: optionConfig,
   } = options;
@@ -202,56 +317,99 @@ export async function syncRedirects(name, options = {}, deps = {}) {
   }
   const specs = readSpecs(resolve(config?.root || process.cwd(), sourceFile));
   const existing = await getAll(acct, '/cms/v3/url-redirects');
-  const plan = planRedirects(specs, existing);
+  const plan = reconcile ? planRedirectsReconcile(specs, existing) : planRedirects(specs, existing);
 
+  // Each managed SOURCE must end up satisfied (created/updated/already-correct).
+  // In reconcile mode we continue past individual failures and only fail the run if
+  // a managed source is left unsatisfied — a single stale legacy delete must not
+  // abort the whole cutover (and skip republish/gates) the way a throw would.
+  const failures = [];
   if (apply) {
     for (const item of plan) {
-      if (item.action === 'create') {
-        const r = await hub(acct, 'POST', '/cms/v3/url-redirects', item.body);
-        if (!r.ok) {
-          const msg = r.json?.message || r.json?.category || JSON.stringify(r.json).slice(0, 200);
-          throw new Error(`create redirect ${item.spec.routePrefix} -> ${r.status}: ${msg}`);
+      try {
+        if (item.action === 'delete') {
+          const r = await hub(acct, 'DELETE', `/cms/v3/url-redirects/${item.id}`);
+          // 404 == already gone; treat as success (idempotent).
+          if (!r.ok && r.status !== 404) {
+            throw new Error(`delete redirect ${item.current?.routePrefix} (${item.id}) -> ${r.status}: ${r.json?.message || ''}`);
+          }
+        } else if (item.action === 'create') {
+          const r = await hub(acct, 'POST', '/cms/v3/url-redirects', item.body);
+          if (!r.ok) {
+            const msg = r.json?.message || r.json?.category || JSON.stringify(r.json).slice(0, 200);
+            throw new Error(`create redirect ${item.spec.routePrefix} -> ${r.status}: ${msg}`);
+          }
+          item.id = String(r.json?.id ?? '');
+        } else if (item.action === 'update') {
+          const r = await hub(acct, 'PATCH', `/cms/v3/url-redirects/${item.id}`, item.body);
+          if (!r.ok) {
+            const msg = r.json?.message || r.json?.category || JSON.stringify(r.json).slice(0, 200);
+            throw new Error(`update redirect ${item.spec.routePrefix} (${item.id}) -> ${r.status}: ${msg}`);
+          }
         }
-        item.id = String(r.json?.id ?? '');
-      } else if (item.action === 'update') {
-        const r = await hub(acct, 'PATCH', `/cms/v3/url-redirects/${item.id}`, item.body);
-        if (!r.ok) {
-          const msg = r.json?.message || r.json?.category || JSON.stringify(r.json).slice(0, 200);
-          throw new Error(`update redirect ${item.spec.routePrefix} (${item.id}) -> ${r.status}: ${msg}`);
-        }
+      } catch (e) {
+        if (!reconcile) throw e;
+        failures.push({ item, message: e.message });
       }
     }
   }
 
-  return {
+  // A managed source is "unsatisfied" only if its own create/update failed; a failed
+  // legacy delete (action: 'delete') is logged but does not fail the cutover.
+  const sourceFailures = failures.filter((f) => f.item.action === 'create' || f.item.action === 'update');
+
+  const result = {
     account: acct.name,
     portalId: acct.portalId,
     file: sourceFile,
     apply,
+    reconcile,
     plan,
+    failures,
     counts: {
+      delete: plan.filter((x) => x.action === 'delete').length,
       create: plan.filter((x) => x.action === 'create').length,
       update: plan.filter((x) => x.action === 'update').length,
       unchanged: plan.filter((x) => x.action === 'unchanged').length,
     },
   };
+
+  if (apply && sourceFailures.length) {
+    const err = new Error(
+      `redirects: ${sourceFailures.length} managed redirect(s) failed to apply:\n` +
+        sourceFailures.map((f) => `  - ${f.message}`).join('\n'),
+    );
+    err.result = result;
+    throw err;
+  }
+
+  return result;
 }
 
 export function renderRedirectReport(result) {
   const mode = result.apply ? 'applied' : 'dry-run';
   const lines = [];
-  lines.push(`redirects ${mode} -> account "${result.account}" (portal ${result.portalId})`);
+  lines.push(`redirects ${mode}${result.reconcile ? ' (reconcile)' : ''} -> account "${result.account}" (portal ${result.portalId})`);
   lines.push(`source: ${result.file}`);
+  const c = result.counts;
   lines.push(
-    `summary: ${result.counts.create} create, ${result.counts.update} update, ${result.counts.unchanged} unchanged`,
+    `summary: ${c.delete ?? 0} delete, ${c.create} create, ${c.update} update, ${c.unchanged} unchanged`,
   );
   for (const item of result.plan) {
+    if (item.action === 'delete') {
+      lines.push(`  [delete] ${item.current?.routePrefix} -> ${item.current?.destination} (${item.reason})`);
+      continue;
+    }
     const arrow = `${item.spec.routePrefix} -> ${item.spec.destination}`;
     if (item.action === 'update') {
-      lines.push(`  [update] ${arrow} (${item.changedFields.join(', ')})`);
+      lines.push(`  [update] ${arrow} (was -> ${item.current?.destination})`);
     } else {
       lines.push(`  [${item.action}] ${arrow}`);
     }
+  }
+  if (result.failures?.length) {
+    lines.push(`failures (${result.failures.length}):`);
+    for (const f of result.failures) lines.push(`  - ${f.message}`);
   }
   return lines.join('\n');
 }
@@ -264,15 +422,20 @@ export async function main(argv = process.argv.slice(2), opts = {}) {
   }
   let file;
   let apply = false;
+  let reconcile = false;
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--apply') apply = true;
+    if (argv[i] === '--reconcile') reconcile = true;
     if (argv[i] === '--file') file = argv[++i];
   }
   try {
-    const result = await syncRedirects(accountName, { file, apply, config: opts.config }, opts.deps);
+    const result = await syncRedirects(accountName, { file, apply, reconcile, config: opts.config }, opts.deps);
     process.stdout.write(renderRedirectReport(result) + '\n');
     return 0;
   } catch (e) {
+    // A reconcile apply that fails on managed sources still carries a result with the
+    // full plan/failures — surface the report before the error for diagnosis.
+    if (e.result) process.stdout.write(renderRedirectReport(e.result) + '\n');
     process.stderr.write(`redirects failed: ${e.message}\n`);
     return 1;
   }

@@ -119,14 +119,21 @@ async function main(argv = process.argv) {
     .argument('<account>')
     .option('--file <path>', 'redirect spec CSV or JSON; defaults to config.redirectsFile')
     .option('--apply', 'write creates/updates to HubSpot')
+    .option('--reconcile', 'path-normalized cutover: replace shadowing/reverse legacy redirects for managed routes (continue-on-error)')
     .action(async (account, options) => {
       const config = await withConfig(program.opts());
-      const result = await syncRedirects(account, {
-        file: options.file,
-        apply: !!options.apply,
-        config,
-      });
-      console.log(renderRedirectReport(result));
+      try {
+        const result = await syncRedirects(account, {
+          file: options.file,
+          apply: !!options.apply,
+          reconcile: !!options.reconcile,
+          config,
+        });
+        console.log(renderRedirectReport(result));
+      } catch (e) {
+        if (e.result) console.log(renderRedirectReport(e.result));
+        throw e;
+      }
     });
 
   program
