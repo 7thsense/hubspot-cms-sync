@@ -141,6 +141,34 @@ function formatDate(value, style = 'medium') {
   return `${MONTHS_ABBR[m]} ${day}, ${y}`;
 }
 
+// HubL's datetimeformat(value, '%Y-%m-%dT%H:%M:%SZ') — strftime-style formatting.
+// Mirrors the HubL filter blog-post schema uses for an ISO-8601 datePublished, so
+// the ONE template renders an identical datetime on the HubSpot and static targets.
+// UTC for determinism. Unrecognized %-tokens pass through; everything else is literal.
+function datetimeformat(value, fmt = '%Y-%m-%dT%H:%M:%SZ') {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  const p2 = (n) => String(n).padStart(2, '0');
+  const tokens = {
+    Y: d.getUTCFullYear(),
+    m: p2(d.getUTCMonth() + 1),
+    d: p2(d.getUTCDate()),
+    H: p2(d.getUTCHours()),
+    M: p2(d.getUTCMinutes()),
+    S: p2(d.getUTCSeconds()),
+    '%': '%',
+  };
+  return String(fmt).replace(/%([YmdHMS%])/g, (m, t) => String(tokens[t]));
+}
+
+// HubL's escapejson — make a string safe to embed inside a JSON string literal
+// (escapes quotes/backslashes/control chars) WITHOUT adding the surrounding quotes,
+// so a template can write "{{ value|escapejson }}".
+function escapejson(value) {
+  return JSON.stringify(String(value ?? '')).slice(1, -1);
+}
+
 // ---------------------------------------------------------------------------
 // Neutral post view -> HubL `content` shim (snake_case, refs resolved for the
 // static target). Reused for the page being rendered AND for related-post cards
@@ -236,6 +264,8 @@ function makeEnv(siteDir, { site, opts }) {
   env.addFilter('hubslice', (str, start, end) =>
     end === null || end === undefined ? String(str ?? '').slice(start) : String(str ?? '').slice(start, end));
   env.addFilter('format_date', formatDate);
+  env.addFilter('datetimeformat', datetimeformat);
+  env.addFilter('escapejson', escapejson);
 
   // get_asset_url rewrites css/js references to their content-hashed URLs when a build
   // manifest is present (static target); otherwise it falls back to the plain path.
@@ -271,41 +301,19 @@ function absUrl(baseUrl, path) {
   return baseUrl + (String(path).startsWith('/') ? path : `/${path}`);
 }
 
-// Build the BlogPosting JSON-LD HubSpot auto-injects on every post, so the static
-// target emits the SAME structured data (parity). Goes into the standard_header_includes
-// head slot — exactly where HubSpot puts it. Yields the {BlogPosting, Person(author),
-// Organization(publisher)} types the schema gate requires.
-export function buildBlogPostingLd(post, { baseUrl = '', assetBase = '/assets' } = {}) {
-  const url = absUrl(baseUrl, post.route);
-  const ld = {
-    '@context': 'https://schema.org',
-    '@type': 'BlogPosting',
-    mainEntityOfPage: { '@type': 'WebPage', '@id': url },
-    headline: post.title,
-    publisher: { '@type': 'Organization', logo: { '@type': 'ImageObject' } },
-  };
-  if (post.publishDate) {
-    ld.datePublished = post.publishDate;
-    ld.dateModified = post.publishDate;
-  }
-  if (post.author?.name) {
-    ld.author = { '@type': 'Person', name: post.author.name };
-    if (post.author.slug) ld.author.url = `${baseUrl}/blog/author/${post.author.slug}`;
-  }
-  if (post.featuredImage) {
-    ld.image = [absUrl(baseUrl, resolveStaticRefs(post.featuredImage, { assetBase }))];
-  }
-  return `<script type="application/ld+json">${JSON.stringify(ld)}</script>`;
-}
+// NOTE: BlogPosting JSON-LD is NOT built here. It lives in templates/blog-post.html
+// (HubL), rendered identically by HubSpot and the static env (datetimeformat/escapejson
+// filters) — one source for both targets. A build-time builder here is exactly the
+// static-only side-channel that left HubSpot's render without the structured data.
 
 // ---------------------------------------------------------------------------
 // Public: render one neutral post view to an HTML string.
 // ---------------------------------------------------------------------------
 export function renderPost(post, { siteDir, site, baseUrl = '', assetBase = '/assets', lang = 'en',
   headerIncludes = '', footerIncludes = '', assetManifest, registry = null, template = 'templates/blog-post.html' } = {}) {
-  // Inject the BlogPosting JSON-LD HubSpot auto-generates (parity) into the head slot.
-  const headerLd = buildBlogPostingLd(post, { baseUrl, assetBase });
-  headerIncludes = headerLd + (headerIncludes || '');
+  // The BlogPosting JSON-LD lives in the blog-post HubL template (rendered identically
+  // on the HubSpot and static targets) — NOT injected here, which would double it on
+  // the static side and leave HubSpot without it (the two-source divergence this fixes).
   const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, assetManifest, registry };
   const env = makeEnv(siteDir, { site, opts });
   const context = {
