@@ -8,7 +8,7 @@
 //   <route>/index.html        for every published page (home slug "" -> index.html)
 //   blog/<slug>/index.html     for every published post
 //   blog/index.html            the blog listing (all posts)
-//   blog/tag/<slug>/index.html  one listing per tag
+//   blog/topic/<slug>/index.html  one listing per tag
 //   css/ js/ images/ assets/   copied theme + @asset bytes (assets/ <- content/assets)
 //   _redirects                 Cloudflare redirects from sync/redirects.csv
 //   _headers                   cache + basic security headers
@@ -188,7 +188,9 @@ export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '
     }
   }
   for (const [slug, tagPosts] of byTag) {
-    await emitListing(`/blog/tag/${slug}`, tagPosts);
+    // HubSpot serves blog tag listings at /blog/topic/<slug> (the blog's configured tag
+    // base path); the static target must mirror that URL so links resolve on both.
+    await emitListing(`/blog/topic/${slug}`, tagPosts);
   }
 
   // Assets. css/js were already emitted (content-hashed) above; copy the rest as bytes.
