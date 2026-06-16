@@ -13,7 +13,10 @@
 // Checks (hard-fail unless noted):
 //   1. blog container exists with the manifest's blog slug AND points at the
 //      seventh-sense-theme blog templates (item + listing template paths).
-//   2. a homepage is designated — a site page resolves at slug '' (root).
+//   2. a homepage is designated — a site page resolves at slug '' (root), OR a
+//      resolving domain's live root answers 200 text/html (covers the common case
+//      of a normally-slugged page designated as the domain homepage via the UI,
+//      which is invisible to a slug-only check).
 //   3. the service key carries the scopes push needs — probed by exercising one
 //      endpoint per scope family (forms list, a content/page GET, a files search)
 //      and reporting which are missing.
@@ -152,10 +155,63 @@ export function sourceRepairability(repoRoot = REPO_ROOT, opts = {}) {
 // error — it captures the failure so evaluateReadiness can turn it into a scope
 // or readiness finding.
 // ---------------------------------------------------------------------------
+// Default live-root fetcher: GET a URL, follow redirects, return { status, contentType }.
+// Network/timeout failures resolve to { status: 0 } so a probe never throws — an
+// unreachable domain simply doesn't count as a positive homepage signal.
+async function defaultHttpGet(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10000);
+  try {
+    const res = await fetch(url, {
+      redirect: 'follow',
+      signal: ctrl.signal,
+      headers: { 'user-agent': 'hcms-preflight' },
+    });
+    return { status: res.status, contentType: res.headers.get('content-type') || '' };
+  } catch {
+    return { status: 0, contentType: '' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// HTTP-probe the live root of each resolving domain to detect a UI-designated
+// homepage (one the page-list slug check can't see). Returns
+// { found, domain, checked[] }; found when a domain root answers 200 text/html.
+// Public custom domains are tried first (that's where the real homepage serves),
+// hs-sites/sandbox/pagebuilder domains only as a fallback.
+async function probeLiveHomepage(acct, hubFn, httpGet) {
+  let domains = [];
+  try {
+    const d = await hubFn(acct, 'GET', '/cms/v3/domains');
+    if (d.ok) domains = d.json?.results || [];
+  } catch { /* domains unavailable -> no live signal, slug check still applies */ }
+
+  const isFallbackHost = (domain) =>
+    /\.(hs-sites\.com|hubspotpagebuilder\.com)$/i.test(domain) || /\.sandbox\./i.test(domain);
+  const ordered = domains
+    .filter((x) => (x.isResolving ?? x.is_resolving))
+    .map((x) => x.domain)
+    .filter(Boolean)
+    .sort((a, b) => (isFallbackHost(a) ? 1 : 0) - (isFallbackHost(b) ? 1 : 0));
+
+  const checked = [];
+  for (const domain of ordered) {
+    const { status, contentType } = await httpGet(`https://${domain}/`);
+    checked.push(`${domain}:${status || 'err'}`);
+    if (status === 200 && /text\/html/i.test(contentType)) {
+      return { found: true, domain, checked };
+    }
+  }
+  return { found: false, checked };
+}
+
 export async function gatherProbes(acct, opts = {}) {
   const {
     blogSlug = DEFAULT_BLOG_SLUG,
     hub: hubFn = hub,
+    // Injectable so the live-root homepage probe is unit-testable without a network.
+    httpGet = defaultHttpGet,
   } = opts;
 
   const probes = { blogSlug };
@@ -181,13 +237,31 @@ export async function gatherProbes(acct, opts = {}) {
     }
   }
 
-  // --- homepage designation (a site page resolves at root slug '') ------------
+  // --- homepage designation ---------------------------------------------------
+  // A homepage "resolves at root" two ways in HubSpot: a site page whose slug is
+  // empty, OR — the far more common case — a normally-slugged page designated as
+  // the domain homepage through the UI (Settings -> Website -> Pages). The latter
+  // is INVISIBLE in the page list's slug field, so a slug-only check fails forever
+  // even after the operator designates the homepage, reding every release post-push.
+  // We therefore also HTTP-probe the live root of each resolving domain: a 200 HTML
+  // response is proof a homepage is genuinely serving at root.
   {
     const r = await hubFn(acct, 'GET', '/cms/v3/pages/site-pages?limit=100');
     probes.homepage = { status: r.status, ok: r.ok };
     if (r.ok) {
       const results = r.json?.results || [];
-      probes.homepage.found = results.some((p) => String(p.slug ?? '') === '');
+      const bySlug = results.some((p) => String(p.slug ?? '') === '');
+      probes.homepage.found = bySlug;
+      probes.homepage.via = bySlug ? 'slug' : null;
+      if (!bySlug) {
+        const live = await probeLiveHomepage(acct, hubFn, httpGet);
+        probes.homepage.liveChecked = live.checked;
+        if (live.found) {
+          probes.homepage.found = true;
+          probes.homepage.via = 'live-root';
+          probes.homepage.liveDomain = live.domain;
+        }
+      }
     } else {
       probes.homepage.message = r.json?.message || '';
     }
@@ -318,15 +392,20 @@ export function evaluateReadiness(probes, opts = {}) {
       detail: `no site page resolves at the root slug ''; source push will create and publish the committed root page`,
     });
   } else if (!homepage.found) {
+    const live = (homepage.liveChecked && homepage.liveChecked.length)
+      ? ` and no resolving domain root returned 200 text/html (probed: ${homepage.liveChecked.join(', ')})`
+      : '';
     add({
       id: 'homepage',
       ok: false,
-      detail: `no site page resolves at the root slug ''`,
+      detail: `no site page resolves at the root slug ''${live}`,
       remediation:
         `Publish a page at the site root and designate it the homepage ` +
         `(Settings -> Website -> Pages -> "System pages"/homepage, or set the page's URL to the domain root). ` +
         `Homepage designation is UI-gated; push cannot do it.`,
     });
+  } else if (homepage.via === 'live-root') {
+    add({ id: 'homepage', ok: true, detail: `a homepage is live at root (${homepage.liveDomain} -> 200)` });
   } else {
     add({ id: 'homepage', ok: true, detail: `a page is designated at the root slug ''` });
   }

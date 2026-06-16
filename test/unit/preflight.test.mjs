@@ -362,6 +362,53 @@ test('gatherProbes: a 403 on forms is captured as a denied scope (no throw)', as
   assert.deepEqual(failIds(e), ['blog-container', 'homepage', 'scopes']);
 });
 
+test('gatherProbes: UI-designated homepage (no empty slug) is found via a live 200 root', async () => {
+  const acct = { name: 'prod', portalId: '529456', key: 'k' };
+  const hubMock = async (a, method, path) => {
+    if (path.startsWith('/content/api/v2/blogs')) return { ok: true, status: 200, json: { objects: [] } };
+    // No page has an empty slug — the homepage is a normally-slugged page mapped via the UI.
+    if (path.startsWith('/cms/v3/pages/site-pages')) return { ok: true, status: 200, json: { results: [{ slug: 'home' }, { slug: 'about' }] } };
+    if (path.startsWith('/forms/v2/forms')) return { ok: true, status: 200, json: [] };
+    if (path.startsWith('/files/v3/files/search')) return { ok: true, status: 200, json: { results: [] } };
+    if (path.startsWith('/cms/v3/domains')) {
+      return { ok: true, status: 200, json: { results: [
+        { domain: 'x.hs-sites.com', isResolving: true, isHsSitesDomain: true },
+        { domain: 'www.example.com', isResolving: true },
+      ] } };
+    }
+    return { ok: true, status: 200, json: {} };
+  };
+  const got = [];
+  const httpGet = async (url) => { got.push(url); return { status: 200, contentType: 'text/html; charset=utf-8' }; };
+
+  const probes = await gatherProbes(acct, { blogSlug: 'blog', hub: hubMock, httpGet });
+  assert.equal(probes.homepage.found, true);
+  assert.equal(probes.homepage.via, 'live-root');
+  assert.equal(probes.homepage.liveDomain, 'www.example.com');
+  // The public custom domain is probed before the hs-sites fallback.
+  assert.equal(got[0], 'https://www.example.com/');
+  assert.ok(evaluateReadiness(probes, { blogSlug: 'blog' }).checks.find((c) => c.id === 'homepage' && c.ok));
+});
+
+test('gatherProbes: no empty slug AND every live root non-200 -> homepage still not found', async () => {
+  const acct = { name: 'prod', portalId: '529456', key: 'k' };
+  const hubMock = async (a, method, path) => {
+    if (path.startsWith('/content/api/v2/blogs')) return { ok: true, status: 200, json: { objects: [] } };
+    if (path.startsWith('/cms/v3/pages/site-pages')) return { ok: true, status: 200, json: { results: [{ slug: 'home' }] } };
+    if (path.startsWith('/forms/v2/forms')) return { ok: true, status: 200, json: [] };
+    if (path.startsWith('/files/v3/files/search')) return { ok: true, status: 200, json: { results: [] } };
+    if (path.startsWith('/cms/v3/domains')) return { ok: true, status: 200, json: { results: [{ domain: 'www.example.com', isResolving: true }] } };
+    return { ok: true, status: 200, json: {} };
+  };
+  const httpGet = async () => ({ status: 404, contentType: 'text/html' });
+  const probes = await gatherProbes(acct, { blogSlug: 'blog', hub: hubMock, httpGet });
+  assert.equal(probes.homepage.found, false);
+  assert.deepEqual(probes.homepage.liveChecked, ['www.example.com:404']);
+  const e = evaluateReadiness(probes, { blogSlug: 'blog' });
+  assert.ok(failIds(e).includes('homepage'));
+  assert.match(e.failures.find((f) => f.id === 'homepage').detail, /no resolving domain root returned 200/);
+});
+
 // ---------------- PRODUCTION guard ----------------
 
 test('main: refuses to run against the production portal (exit 3)', async () => {
