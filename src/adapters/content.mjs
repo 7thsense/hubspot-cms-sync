@@ -49,11 +49,30 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { hub, resolvePageBySlug } from '../lib/hub.mjs';
+import { hub, getAll } from '../lib/hub.mjs';
 import { stableStringify, normalizeWidgets, fileToSlug } from '../lib/canonical.mjs';
 import { resolve } from '../lib/refs.mjs';
+import {
+  loadPublishSnapshot,
+  savePublishSnapshot,
+  fingerprint,
+  classifyChange,
+} from '../lib/publish-snapshot.mjs';
 
 export const name = 'content';
+
+// Source/remote field projections for change + drift detection. sourceFields hashes OUR
+// canonical widgets carrier (logical tokens, account-independent — so "did the source
+// change" is portable). remoteFields hashes the LIVE HubSpot widgets as HubSpot
+// normalized them (so "did HubSpot drift" compares remote-to-remote and survives any
+// normalization). This is the home-page CTA divergence guard: a widget link edited in
+// the HubSpot UI changes remoteFp while sourceFp is unchanged -> classifyChange 'drift'.
+function sourceFields(widgetsRaw) {
+  return { widgets: widgetsRaw };
+}
+function remoteFields(remoteWidgets) {
+  return { widgets: normalizeWidgets(remoteWidgets || {}) };
+}
 
 // Page widgets embed form GUIDs and CTA refs whose TARGET ids/urls are populated by
 // the forms and assets adapters' push. We CONSUME those registry entries at push
@@ -93,10 +112,26 @@ export async function pull() {
 // if any ref is unmapped), resolve the page id by slug, PATCH the page draft with the
 // full widgets carrier (replace-not-merge), then schedule a near-future publish so the
 // draft goes live. Standalone <slug>.widgets.json files (legacy) are ignored.
-// Idempotent: PATCH draft + schedule by stable identity (slug -> page id) — running
-// twice converges to the same draft+publish.
+// Change-aware (mirrors the blog adapter): a re-push SKIPS a page whose source is
+// unchanged AND whose live remote widgets still match what we pushed; a page edited in the
+// HubSpot UI (drift: source unchanged, remote changed) is REPORTED and left as-is unless
+// `force`, so a UI edit is never silently clobbered (the home-page CTA-link incident).
+// Idempotent: PATCH draft + schedule by stable identity (slug -> page id).
 // ---------------------------------------------------------------------------
-export async function push(acct, { contentDir, registry }) {
+export async function push(
+  acct,
+  {
+    contentDir,
+    registry,
+    // force: re-push even pages whose live remote widgets drifted (HubSpot UI edit).
+    // Default false so a UI edit is reported and PRESERVED, not silently clobbered —
+    // the guard behind the home-page CTA-link divergence incident.
+    force = false,
+    // snapshotRoot: where .sync-state/<portal>.sync.json lives (repo root). The change
+    // snapshot lets a re-push SKIP unchanged pages (no PATCH/schedule) and detect drift.
+    snapshotRoot = process.cwd(),
+  } = {},
+) {
   const notes = [];
   const dir = join(contentDir, PAGES_SUBDIR);
   if (!existsSync(dir)) {
@@ -109,7 +144,23 @@ export async function push(acct, { contentDir, registry }) {
   const files = readdirSync(dir)
     .filter((f) => f.endsWith('.json') && !f.endsWith(WIDGETS_SUFFIX))
     .sort();
+
+  // Fetch every live site page ONCE and key by slug, keeping the id + a fingerprint of
+  // the LIVE widgets carrier (HubSpot-normalized) so we can (a) resolve a page id by slug
+  // without a per-file list call and (b) detect drift (a UI edit) vs our last push. This
+  // mirrors the blog adapter's `existing` map ({id, remoteFp} by slug).
+  const livePages = await getAll(acct, '/cms/v3/pages/site-pages');
+  const existing = new Map(
+    livePages.map((p) => [
+      String(p.slug ?? ''),
+      { id: String(p.id), remoteFp: fingerprint(remoteFields(p.widgets)) },
+    ]),
+  );
+  const snapshot = loadPublishSnapshot(snapshotRoot, acct.portalId);
+
   let pushed = 0;
+  let skipped = 0;
+  let drifted = 0;
   for (const fname of files) {
     // 1. Read the page file and project its embedded widgets to the canonical carrier
     //    (normalizeWidgets keeps the load-bearing empties; idempotent — the `pages`
@@ -131,6 +182,30 @@ export async function push(acct, { contentDir, registry }) {
 
     const slug = page.slug == null ? fileToSlug(fname.replace(/\.json$/, '')) : String(page.slug);
 
+    // 2. Resolve the page id by slug from the one-shot live-page map. The page
+    //    DEFINITION must already exist (pages adapter runs first). If it doesn't, this
+    //    adapter can't place the widgets.
+    const remote = existing.get(slug);
+    if (!remote) {
+      notes.push(`skip ${fname}: no page in account ${acct.portalId} for slug "${slug}" (pages.push must create it first)`);
+      continue;
+    }
+    const pageId = remote.id;
+
+    // 2b. change/drift gate (before resolve / PATCH / schedule). Skip a page whose source
+    //     is unchanged AND whose live remote widgets still match what we pushed; never
+    //     silently clobber a HubSpot UI edit (drift) unless --force. The snapshot is keyed
+    //     by slug (the page's stable identity), mirroring the blog adapter.
+    const sourceFp = fingerprint(sourceFields(widgetsRaw));
+    const stored = snapshot.pages[slug];
+    const action = classifyChange(stored, sourceFp, remote.remoteFp, { remotePresent: true });
+    if (action === 'unchanged') { skipped += 1; continue; }
+    if (action === 'drift' && !force) {
+      drifted += 1;
+      notes.push(`⚠ drift: ${slug} changed on HubSpot since last sync — left as-is (--force to overwrite)`);
+      continue;
+    }
+
     // 1b. Inject target ids. resolve() THROWS listing every unmapped logical ref — a
     //     missing form/cta/asset mapping must abort the push (never a partial blank).
     let widgets;
@@ -140,14 +215,6 @@ export async function push(acct, { contentDir, registry }) {
       // A ref-resolve failure is a hard error (re-throw); JSON.parse here cannot fail
       // because stableStringify produced the bytes, but keep the slug in any message.
       throw new Error(`content.push: ${fname} (slug "${slug}"): ${e.message}`);
-    }
-
-    // 2. Resolve the page id by slug. The page DEFINITION must already exist (pages
-    //    adapter runs first). If it doesn't, this adapter can't place the widgets.
-    const pageId = await resolvePageBySlug(acct, slug);
-    if (!pageId) {
-      notes.push(`skip ${fname}: no page in account ${acct.portalId} for slug "${slug}" (pages.push must create it first)`);
-      continue;
     }
 
     // 3. PATCH the draft with the FULL carrier (replace-not-merge). We send the
@@ -180,10 +247,27 @@ export async function push(acct, { contentDir, registry }) {
           `(draft was PATCHed but is NOT live — re-run to converge)`,
       );
     }
+
+    // Record the new snapshot entry so the NEXT push can skip this page when nothing
+    // changed. Re-fetch the page draft to capture HubSpot's NORMALIZED widgets as
+    // remoteFp (a UI edit between now and the next push will then read as drift). If the
+    // re-fetch fails, fall back to the just-PATCHed carrier we sent.
+    const fresh = await hub(acct, 'GET', `/cms/v3/pages/site-pages/${pageId}/draft`);
+    snapshot.pages[slug] = {
+      id: String(pageId),
+      sourceFp,
+      remoteFp: fingerprint(remoteFields(fresh.ok ? fresh.json?.widgets : widgets)),
+    };
     pushed += 1;
   }
 
-  notes.push(`pushed ${pushed} page widget map(s) (from embedded <slug>.json) to portal ${acct.portalId}`);
+  // Persist the change snapshot so the next push skips unchanged pages. Drift entries
+  // (left as-is) keep their prior snapshot, so they keep being reported until resolved.
+  savePublishSnapshot(snapshotRoot, acct.portalId, snapshot);
+
+  notes.push(
+    `pushed ${pushed} | skipped ${skipped} | drift ${drifted} page widget map(s) (from embedded <slug>.json) to portal ${acct.portalId}`,
+  );
   return { pushed, notes };
 }
 
