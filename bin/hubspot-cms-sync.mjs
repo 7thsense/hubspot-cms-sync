@@ -89,6 +89,7 @@ async function main(argv = process.argv) {
     .description('push repo content to HubSpot')
     .argument('<account>')
     .option('--publish', 'publish/schedule pushed content')
+    .option('--force', 'overwrite items that drifted on HubSpot (UI edits) since the last sync')
     .option('--dry-run', 'run local push preflight only')
     .action(async (account, options) => {
       const config = await withConfig(program.opts());
@@ -97,7 +98,7 @@ async function main(argv = process.argv) {
         console.log(`dry-run push preflight passed for ${account}`);
         return;
       }
-      await push(account, { publish: !!options.publish, config });
+      await push(account, { publish: !!options.publish, force: !!options.force, config });
     });
 
   program

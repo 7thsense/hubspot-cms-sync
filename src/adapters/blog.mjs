@@ -55,6 +55,37 @@ import { stableStringify } from '../lib/canonical.mjs';
 import { wireToFile, fileToWire } from '../lib/posts-format.mjs';
 import { resolve as resolveRefs, canonicalize as canonicalizeRefs } from '../lib/refs.mjs';
 import { resolveCtaEmbeds, loadInventory } from '../cta-inventory.mjs';
+import {
+  loadPublishSnapshot,
+  savePublishSnapshot,
+  fingerprint,
+  classifyChange,
+} from '../lib/publish-snapshot.mjs';
+
+// Source/remote field projections for change + drift detection. sourceFields hashes OUR
+// canonical post (so "did the source change" is account-independent); remoteFields hashes
+// the LIVE HubSpot post as HubSpot normalized it (so "did HubSpot drift" compares
+// remote-to-remote and survives HubSpot's HTML reformatting).
+function sourceFields(p, willPublish) {
+  return {
+    name: p.name, htmlTitle: p.htmlTitle || p.name, slug: p.slug,
+    postBody: p.postBody || '', postSummary: p.postSummary || '',
+    metaDescription: p.metaDescription || '', featuredImage: p.featuredImage || '',
+    featuredImageAltText: p.featuredImageAltText || '', useFeaturedImage: p.useFeaturedImage ?? false,
+    author: p.author?.slug || p.author?.name || p.authorSlug || '',
+    tags: (p.tags || []).slice().sort(),
+    publishDate: p.publishDate || null, willPublish: !!willPublish,
+  };
+}
+function remoteFields(r) {
+  return {
+    name: r.name || '', htmlTitle: r.htmlTitle || '', slug: r.slug || '',
+    postBody: r.postBody || '', metaDescription: r.metaDescription || '',
+    featuredImage: r.featuredImage || '', publishDate: r.publishDate || null,
+    state: r.state || '', tagIds: (r.tagIds || []).map(String).sort(),
+    blogAuthorId: String(r.blogAuthorId || ''),
+  };
+}
 
 const API = 'https://api.hubapi.com';
 
@@ -465,6 +496,12 @@ export async function push(
     // of the blog — used by verification harnesses; undefined means "all posts".
     only,
     dryRun = false,
+    // force: re-push even posts whose live remote drifted (HubSpot UI edit). Default
+    // false so a UI edit is reported and preserved, not silently clobbered.
+    force = false,
+    // snapshotRoot: where .sync-state/<portal>.sync.json lives (repo root). The change
+    // snapshot lets a re-push SKIP unchanged posts (no date dance) and detect drift.
+    snapshotRoot = process.cwd(),
     hubFn = hub,
     // Injectable clock + sleep so the "wait past every scheduled publish" gate
     // (codex #7 final-pass fix) is unit-testable WITHOUT actually waiting ~90s.
@@ -538,14 +575,22 @@ export async function push(
   const authorProfiles = loadAuthorProfiles(dir);
   const patchedAuthors = new Set();
   const tagCache = await nameIndex(hubFn, acct, '/cms/v3/blogs/tags', ['slug', 'name']);
+  // Keep the FULL remote post (state + content) so we can (a) pick the no-flip publish
+  // path for already-live posts and (b) fingerprint the live remote for drift detection.
   const existing = new Map(
-    (await getAllVia(hubFn, acct, '/cms/v3/blogs/posts')).map((p) => [p.slug, String(p.id)]),
+    (await getAllVia(hubFn, acct, '/cms/v3/blogs/posts')).map((p) => [
+      p.slug,
+      { id: String(p.id), state: p.state, remoteFp: fingerprint(remoteFields(p)) },
+    ]),
   );
+  const snapshot = loadPublishSnapshot(snapshotRoot, acct.portalId);
 
   let created = 0,
     updated = 0,
     published = 0,
-    failed = 0;
+    failed = 0,
+    skipped = 0,
+    drifted = 0;
   // Posts to date-restore in a FINAL pass (after every schedule has fired), so a
   // not-yet-fired scheduled publish can't clobber the date set per-post (the race
   // that churned 33/68 dates to "today" — SYNC-NOTES §3 / codex #7).
@@ -557,6 +602,28 @@ export async function push(
 
   for (const p of posts) {
     try {
+      // ── change/drift gate (before any write or expensive ensure call) ───────────
+      // Skip a post whose source is unchanged AND whose live remote still matches what
+      // we pushed; never silently clobber a HubSpot UI edit (drift) unless --force.
+      const sourceFp = fingerprint(sourceFields(p, publish));
+      const remote = existing.get(p.slug);
+      const stored = snapshot.posts[p.slug];
+      const action = classifyChange(stored, sourceFp, remote?.remoteFp, { remotePresent: !!remote });
+
+      if (dryRun) {
+        // Still resolve the container so a missing-container (UI-gated) error surfaces
+        // in dryRun, the same as a real push — but write nothing.
+        await containerIdFor(p.blogSlug);
+        notes.push(`would ${action}: ${p.slug}`);
+        continue;
+      }
+      if (action === 'unchanged') { skipped++; continue; }
+      if (action === 'drift' && !force) {
+        drifted++;
+        notes.push(`⚠ drift: ${p.slug} changed on HubSpot since last sync — left as-is (--force to overwrite)`);
+        continue;
+      }
+
       const contentGroupId = await containerIdFor(p.blogSlug);
       const blogAuthorId = await ensureAuthor(acct, p, authorCache, hubFn, {
         profiles: authorProfiles,
@@ -584,47 +651,59 @@ export async function push(
         useFeaturedImage: p.useFeaturedImage ?? false,
         blogAuthorId,
         tagIds,
-        // Always send the original publishDate so a re-push restores the real
-        // 2017–2026 chronology instead of leaving "now" from a prior schedule.
+        // Always send the original publishDate so the live post keeps its real
+        // 2017–2026 chronology instead of "now".
         publishDate: p.publishDate || undefined,
         state: publish ? 'PUBLISHED' : 'DRAFT',
       };
 
-      if (dryRun) {
-        notes.push(`would ${existing.has(p.slug) ? 'update' : 'create'}: ${p.slug}`);
-        continue;
-      }
-
       let id;
-      if (existing.has(p.slug)) {
-        id = existing.get(p.slug);
+      const wasPublished = remote?.state === 'PUBLISHED';
+      if (remote) {
+        id = remote.id;
         await hubOk(hubFn, acct, 'PATCH', `/cms/v3/blogs/posts/${id}`, body);
         updated++;
       } else {
         const j = await hubOk(hubFn, acct, 'POST', '/cms/v3/blogs/posts', body);
         id = String(j.id);
-        existing.set(p.slug, id);
         created++;
       }
 
       if (publish) {
-        const r = await publishPost(acct, id, p.publishDate, { hubFn, now, sleep });
-        if (r.scheduledMs > latestScheduleMs) latestScheduleMs = r.scheduledMs;
-        if (p.publishDate) toRestore.push({ id, slug: p.slug, publishDate: p.publishDate });
+        if (wasPublished) {
+          // Already live: the PATCH updated the draft buffer (with the ORIGINAL
+          // publishDate); push the draft live. The date is PRESERVED — no schedule,
+          // no "now" flip, no restore pass. (Verified on the dev sandbox.)
+          await hubOk(hubFn, acct, 'POST', `/cms/v3/blogs/posts/${id}/draft/push-live`, {});
+        } else {
+          // New/draft → the schedule dance is the ONLY way to transition a post live
+          // with a historical date (HubSpot's schedule endpoint rejects past dates).
+          const r = await publishPost(acct, id, p.publishDate, { hubFn, now, sleep });
+          if (r.scheduledMs > latestScheduleMs) latestScheduleMs = r.scheduledMs;
+          if (p.publishDate) toRestore.push({ id, slug: p.slug, publishDate: p.publishDate });
+        }
         published++;
       }
+
+      // Record the new snapshot entry (re-fetch to capture HubSpot's normalized remote
+      // form) so the NEXT push can skip this post when nothing changed.
+      const fresh = await hubFn(acct, 'GET', `/cms/v3/blogs/posts/${id}`);
+      snapshot.posts[p.slug] = {
+        id: String(id),
+        sourceFp,
+        remoteFp: fresh.ok ? fingerprint(remoteFields(fresh.json)) : remote?.remoteFp || '',
+      };
     } catch (e) {
       failed++;
       notes.push(`✖ ${p.slug}: ${e.message}`);
     }
   }
 
-  // FINAL date-restore pass (codex #7): re-PATCH each canonical publishDate and
-  // VERIFY it stuck. CRITICAL: this pass must run AFTER every post's scheduled
-  // publish (now+90s) has fired — otherwise a late schedule clobbers the date we
-  // just restored (the race that churned 33/68 dates on the last full push). So we
-  // WAIT past the LATEST schedule time (plus a settle margin) before restoring.
-  // sleep/now are injectable so unit tests don't actually wait ~90s.
+  // FINAL date-restore pass (codex #7): only NEW/draft posts take the schedule dance
+  // now (already-live posts use push-live, which preserves the date), so toRestore is
+  // usually empty. When it isn't, re-PATCH each canonical publishDate AFTER every
+  // scheduled publish (now+90s) has fired — otherwise a late schedule clobbers the date
+  // we just restored. sleep/now are injectable so unit tests don't actually wait ~90s.
   let restored = 0;
   if (!dryRun && publish && toRestore.length) {
     await waitUntil(latestScheduleMs + SCHEDULE_SETTLE_MS, { now, sleep });
@@ -635,8 +714,12 @@ export async function push(
     }
   }
 
+  // Persist the change snapshot so the next push skips unchanged posts. Drift entries
+  // (left as-is) keep their prior snapshot, so they keep being reported until resolved.
+  if (!dryRun) savePublishSnapshot(snapshotRoot, acct.portalId, snapshot);
+
   notes.push(
-    `created ${created} | updated ${updated} | published ${published} | restored ${restored} | failed ${failed}`,
+    `created ${created} | updated ${updated} | published ${published} | skipped ${skipped} | drift ${drifted} | restored ${restored} | failed ${failed}`,
   );
 
   // codex #9: a per-post failure must NOT report a clean push. The old code counted

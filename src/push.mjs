@@ -270,7 +270,7 @@ export function preflightRefs(contentDirPath, deps = {}) {
 // hub/orchestrate/sync-state functions. Unit tests inject fakes so push() can be
 // exercised with no network and no real .sync-state writes.
 export async function push(name, options = {}, deps = {}) {
-  const { publish = false, config: optionConfig } = options;
+  const { publish = false, force = false, config: optionConfig } = options;
   const {
     account = realAccount,
     loadAdapters = realLoadAdapters,
@@ -302,7 +302,16 @@ export async function push(name, options = {}, deps = {}) {
   const adapters = await loadAdapters();
   const order = topoSort(adapters);
 
-  const ctx = { contentDir: contentDir(config), registry, publish, config };
+  // force: overwrite even drifted (UI-edited) remote items. snapshotRoot: where the
+  // change snapshot (.sync-state/<portal>.sync.json) lives — the repo root.
+  const ctx = {
+    contentDir: contentDir(config),
+    registry,
+    publish,
+    force,
+    snapshotRoot: config?.root || process.cwd(),
+    config,
+  };
 
   console.log(`push -> account "${acct.name}" (portal ${acct.portalId})${publish ? ' [--publish]' : ''}`);
   console.log(`order: ${order.join(' -> ')}\n`);
