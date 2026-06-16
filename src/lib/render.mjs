@@ -169,6 +169,15 @@ function escapejson(value) {
   return JSON.stringify(String(value ?? '')).slice(1, -1);
 }
 
+// HubL's striptags — remove HTML tags, leaving text content. On HubSpot, editable
+// fields like content.name render wrapped in an hs_cos_wrapper <span> (for the in-page
+// editor); striptags yields the clean title for JSON-LD/meta. On the static target the
+// value is already clean, so this is a no-op there — keeping the ONE template valid for
+// both renderers.
+function striptags(value) {
+  return String(value ?? '').replace(/<[^>]*>/g, '');
+}
+
 // ---------------------------------------------------------------------------
 // Neutral post view -> HubL `content` shim (snake_case, refs resolved for the
 // static target). Reused for the page being rendered AND for related-post cards
@@ -266,6 +275,7 @@ function makeEnv(siteDir, { site, opts }) {
   env.addFilter('format_date', formatDate);
   env.addFilter('datetimeformat', datetimeformat);
   env.addFilter('escapejson', escapejson);
+  env.addFilter('striptags', striptags);
 
   // get_asset_url rewrites css/js references to their content-hashed URLs when a build
   // manifest is present (static target); otherwise it falls back to the plain path.
