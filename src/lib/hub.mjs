@@ -91,26 +91,60 @@ export function account(name, cfg = fallbackConfig()) {
  * @param {*} [body] optional JSON body
  * @returns {Promise<{ ok: boolean, status: number, json: any }>}
  */
-export async function hub(acct, method, path, body) {
+// Transient HubSpot failures — gateway 5xx (the 502/503/504 HTML error pages CloudFront
+// returns under load) and 429 rate limits — are retried with exponential backoff so a
+// single flaky response can't abort a whole push mid-stream. 4xx (real errors) are not
+// retried. Network-level throws (ECONNRESET/timeouts) are retried too.
+const HUB_MAX_ATTEMPTS = 5;
+const isTransientStatus = (s) => s === 429 || (s >= 500 && s <= 599);
+
+export async function hub(acct, method, path, body, opts = {}) {
   if (!acct || !acct.key) {
     throw new Error('hub() requires an account object with a key (from account()).');
   }
-  const res = await fetch(API + path, {
-    method,
-    headers: {
-      Authorization: `Bearer ${acct.key}`,
-      'Content-Type': 'application/json',
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  const text = await res.text();
-  let json;
-  try {
-    json = text ? JSON.parse(text) : {};
-  } catch {
-    json = { raw: text };
+  const maxAttempts = opts.maxAttempts ?? HUB_MAX_ATTEMPTS;
+  const sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let res;
+    try {
+      res = await fetch(API + path, {
+        method,
+        headers: {
+          Authorization: `Bearer ${acct.key}`,
+          'Content-Type': 'application/json',
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+    } catch (e) {
+      // Network error — retry with backoff, then rethrow on the final attempt.
+      lastErr = e;
+      if (attempt >= maxAttempts) throw e;
+      await sleep(backoffMs(attempt, null));
+      continue;
+    }
+    const text = await res.text();
+    let json;
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch {
+      json = { raw: text };
+    }
+    if (isTransientStatus(res.status) && attempt < maxAttempts) {
+      await sleep(backoffMs(attempt, res.headers.get('retry-after')));
+      continue;
+    }
+    return { ok: res.ok, status: res.status, json };
   }
-  return { ok: res.ok, status: res.status, json };
+  // Exhausted retries on repeated network errors.
+  throw lastErr;
+}
+
+// Exponential backoff with a Retry-After override (429s). attempt is 1-based.
+function backoffMs(attempt, retryAfter) {
+  const ra = Number.parseInt(retryAfter ?? '', 10);
+  if (Number.isFinite(ra) && ra > 0) return Math.min(ra * 1000, 30000);
+  return Math.min(500 * 2 ** (attempt - 1), 8000);
 }
 
 /**

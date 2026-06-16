@@ -13,6 +13,7 @@ import {
   loadAccounts,
   account,
   getAll,
+  hub,
   matchPageSlug,
   matchBlogSlug,
   resolvePageBySlug,
@@ -148,6 +149,82 @@ test('getAll throws with status + message on a non-ok page', async () => {
   try {
     const acct = { name: 'dev', portalId: '246389711', key: 'k' };
     await assert.rejects(() => getAll(acct, '/cms/v3/pages/site-pages'), /403.*forbidden scope/);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+// ---------- hub() transient-retry ----------
+
+const noHeaders = { get: () => null };
+
+test('hub retries a transient 502 then succeeds', async () => {
+  const orig = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls < 3) return { ok: false, status: 502, headers: noHeaders, text: async () => '<html>gateway</html>' };
+    return { ok: true, status: 200, headers: noHeaders, text: async () => JSON.stringify({ id: 'ok' }) };
+  };
+  try {
+    const acct = { name: 'dev', portalId: '529456', key: 'k' };
+    const r = await hub(acct, 'PATCH', '/cms/v3/blogs/posts/1', { x: 1 }, { sleep: async () => {} });
+    assert.equal(r.ok, true);
+    assert.equal(r.json.id, 'ok');
+    assert.equal(calls, 3); // 2 failures + 1 success
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('hub does NOT retry a 4xx (real error returned immediately)', async () => {
+  const orig = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return { ok: false, status: 400, headers: noHeaders, text: async () => JSON.stringify({ message: 'bad' }) };
+  };
+  try {
+    const acct = { name: 'dev', portalId: '529456', key: 'k' };
+    const r = await hub(acct, 'POST', '/x', {}, { sleep: async () => {} });
+    assert.equal(r.status, 400);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('hub gives up after maxAttempts on a persistent 503', async () => {
+  const orig = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return { ok: false, status: 503, headers: noHeaders, text: async () => 'down' };
+  };
+  try {
+    const acct = { name: 'dev', portalId: '529456', key: 'k' };
+    const r = await hub(acct, 'GET', '/x', undefined, { maxAttempts: 3, sleep: async () => {} });
+    assert.equal(r.ok, false);
+    assert.equal(r.status, 503);
+    assert.equal(calls, 3);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('hub retries a network throw then succeeds', async () => {
+  const orig = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls < 2) throw new Error('ECONNRESET');
+    return { ok: true, status: 200, headers: noHeaders, text: async () => '{}' };
+  };
+  try {
+    const acct = { name: 'dev', portalId: '529456', key: 'k' };
+    const r = await hub(acct, 'GET', '/x', undefined, { sleep: async () => {} });
+    assert.equal(r.ok, true);
+    assert.equal(calls, 2);
   } finally {
     globalThis.fetch = orig;
   }

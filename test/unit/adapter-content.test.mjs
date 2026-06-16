@@ -535,14 +535,16 @@ test('push schedule failure on the SECOND item throws and stops (does not silent
   globalThis.fetch = makeSchedulableFetch(
     {
       idForSlug: { a: '1', b: '2', c: '3' },
-      scheduleResult: (i) => (i === 1 ? { ok: false, status: 502, body: '{}' } : { ok: true, status: 204, body: '' }),
+      // 400 = a hard, non-retryable failure (a transient 5xx would now be retried by
+      // hub(); this test asserts the throw-and-stop behavior on a genuine failure).
+      scheduleResult: (i) => (i === 1 ? { ok: false, status: 400, body: '{}' } : { ok: true, status: 204, body: '' }),
     },
     calls,
   );
   try {
     await assert.rejects(
       () => push(acct('246389711'), { contentDir: dir, registry: tgtRegistry() }),
-      /schedule .*failed|502/,
+      /schedule .*failed|400/,
     );
     const scheds = calls.filter((c) => c.method === 'POST' && c.url.includes('/schedule'));
     // One success then the failing one threw — the third item is never scheduled.
