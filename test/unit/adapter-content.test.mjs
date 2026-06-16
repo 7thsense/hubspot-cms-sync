@@ -212,7 +212,7 @@ test('push resolves logical refs to the target portal, PATCHes draft, and schedu
     calls,
   );
   try {
-    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry() });
+    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry(), snapshotRoot: dir });
     assert.equal(res.pushed, 1);
 
     const patch = calls.find((c) => c.method === 'PATCH');
@@ -248,7 +248,7 @@ test('push HARD-FAILS (no network write) when a referenced form is unmapped in t
   globalThis.fetch = makeFetch({ pages: [{ id: '700', slug: '' }], detail: {} }, calls);
   try {
     await assert.rejects(
-      () => push(acct('999'), { contentDir: dir, registry: loadRegistry({ portalId: '999' }) }),
+      () => push(acct('999'), { contentDir: dir, registry: loadRegistry({ portalId: '999' }), snapshotRoot: dir }),
       /no mapping|home-lead/,
     );
     assert.ok(!calls.some((c) => c.method === 'PATCH'), 'no draft PATCH on unresolved refs');
@@ -266,7 +266,7 @@ test('push skips a widgets file whose slug has no page in the target account', a
   // No page with slug '' exists -> resolvePageBySlug returns null.
   globalThis.fetch = makeFetch({ pages: [{ id: '700', slug: 'other' }], detail: {} }, calls);
   try {
-    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry() });
+    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry(), snapshotRoot: dir });
     assert.equal(res.pushed, 0);
     assert.ok(!calls.some((c) => c.method === 'PATCH'), 'no PATCH when slug is unresolved');
     assert.ok(res.notes.some((n) => /no page/.test(n)));
@@ -300,7 +300,7 @@ test('push REFUSES to blank a live page: an empty widgets map is skipped, never 
   const calls = [];
   globalThis.fetch = makeFetch({ pages: [{ id: '700', slug: '' }], detail: {} }, calls);
   try {
-    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry() });
+    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry(), snapshotRoot: dir });
     assert.equal(res.pushed, 0, 'nothing pushed for an empty carrier');
     assert.ok(!calls.some((c) => c.method === 'PATCH'), 'NO draft PATCH — must not blank the page');
     assert.ok(!calls.some((c) => c.method === 'POST' && c.url.includes('/schedule')), 'no publish scheduled');
@@ -320,7 +320,7 @@ test('push SKIPS a template-only page (no widgets key) silently — no PATCH, no
   const calls = [];
   globalThis.fetch = makeFetch({ pages: [{ id: '800', slug: 'about' }], detail: {} }, calls);
   try {
-    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry() });
+    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry(), snapshotRoot: dir });
     assert.equal(res.pushed, 0);
     assert.ok(!calls.some((c) => c.method === 'PATCH'), 'no PATCH for a widgetless page');
     assert.ok(!res.notes.some((n) => /about/.test(n)), 'no per-page note for the common template-only case');
@@ -349,7 +349,7 @@ test('push preserves carrier EMPTIES end-to-end: empty-string body fields + css/
   const calls = [];
   globalThis.fetch = makeFetch({ pages: [{ id: '700', slug: '' }], detail: {} }, calls);
   try {
-    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry() });
+    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry(), snapshotRoot: dir });
     assert.equal(res.pushed, 1);
     const patch = calls.find((c) => c.method === 'PATCH');
     assert.ok(patch, 'a draft PATCH was issued');
@@ -385,7 +385,7 @@ test('push ABORTS before ANY network write when the FIRST file has an unmapped r
   globalThis.fetch = makeFetch({ pages: [{ id: '700', slug: '' }], detail: {} }, calls);
   try {
     await assert.rejects(
-      () => push(acct('999'), { contentDir: dir, registry: loadRegistry({ portalId: '999' }) }),
+      () => push(acct('999'), { contentDir: dir, registry: loadRegistry({ portalId: '999' }), snapshotRoot: dir }),
       /no mapping|home-lead/,
     );
     assert.ok(!calls.some((c) => c.method === 'PATCH'), 'no draft PATCH anywhere on unresolved refs');
@@ -396,28 +396,37 @@ test('push ABORTS before ANY network write when the FIRST file has an unmapped r
   }
 });
 
-test('push is IDEMPOTENT: running twice issues the same PATCH+schedule and never grows/blanks the carrier', async () => {
-  // Replace-not-merge means a second identical run must reproduce the SAME draft
-  // payload (stable slug->id identity), not a thinner or different one.
+test('push is IDEMPOTENT: the first run PATCHes; a second unchanged run SKIPS (no redundant PATCH/schedule, never grows/blanks the carrier)', async () => {
+  // Change-aware publishing makes idempotency a SKIP: the first run PATCHes the draft and
+  // records the snapshot; a second run with the SAME source AND the SAME live remote is
+  // `unchanged` and writes nothing (no PATCH, no schedule). The list endpoint reflects the
+  // widgets the first run pushed so the recorded remoteFp matches on the re-read.
   const dir = tmpDir();
   writeCanonicalHome(dir);
   const orig = globalThis.fetch;
+  // The live widgets the first PATCH placed (HubSpot-normalized), surfaced by BOTH the
+  // list endpoint and the draft GET so run 2 reads the same remote we recorded.
+  const liveWidgets = JSON.parse(
+    resolve(stableStringify({ widgets: normalizeWidgets(HOME_WIDGETS_RAW.widgets) }), tgtRegistry()),
+  ).widgets;
   const run = async () => {
     const calls = [];
-    globalThis.fetch = makeFetch({ pages: [{ id: '700', slug: '' }], detail: {} }, calls);
-    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry() });
+    globalThis.fetch = makeFetch(
+      { pages: [{ id: '700', slug: '', widgets: liveWidgets }], detail: { 700: { id: '700', widgets: liveWidgets } } },
+      calls,
+    );
+    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry(), snapshotRoot: dir });
     return { res, calls };
   };
   try {
     const a = await run();
     const b = await run();
-    assert.equal(a.res.pushed, 1);
-    assert.equal(b.res.pushed, 1, 'second run still pushes the same single file');
-    const pa = a.calls.find((c) => c.method === 'PATCH');
-    const pb = b.calls.find((c) => c.method === 'PATCH');
-    // Same draft target and byte-identical widgets payload across runs.
-    assert.equal(pa.url, pb.url, 'same draft endpoint');
-    assert.deepEqual(JSON.parse(pa.body).widgets, JSON.parse(pb.body).widgets, 'identical carrier on re-push');
+    assert.equal(a.res.pushed, 1, 'first run PATCHes the single page');
+    assert.equal(b.res.pushed, 0, 'second unchanged run SKIPS — no redundant push');
+    assert.ok(a.calls.some((c) => c.method === 'PATCH'), 'first run issued a draft PATCH');
+    assert.ok(!b.calls.some((c) => c.method === 'PATCH'), 'second run issued NO PATCH (skip-unchanged)');
+    assert.ok(!b.calls.some((c) => c.method === 'POST' && c.url.includes('/schedule')), 'second run scheduled nothing');
+    assert.match(b.res.notes.join(' '), /skipped 1/);
   } finally {
     globalThis.fetch = orig;
     rmSync(dir, { recursive: true, force: true });
@@ -480,7 +489,7 @@ test('push computes a FRESH future publishDate per item (each schedule date is d
   globalThis.fetch = makeSchedulableFetch({ idForSlug: { a: '1', b: '2', c: '3' } }, calls);
   try {
     const before = Date.now();
-    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry() });
+    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry(), snapshotRoot: dir });
     assert.equal(res.pushed, 3);
     const scheds = calls.filter((c) => c.method === 'POST' && c.url.includes('/schedule'));
     assert.equal(scheds.length, 3, 'all three files scheduled');
@@ -513,7 +522,7 @@ test('push THROWS on a schedule failure (no silent draft/live divergence)', asyn
   );
   try {
     await assert.rejects(
-      () => push(acct('246389711'), { contentDir: dir, registry: tgtRegistry() }),
+      () => push(acct('246389711'), { contentDir: dir, registry: tgtRegistry(), snapshotRoot: dir }),
       /schedule .*failed|PUBLISH_DATE_IN_PAST|NOT live/,
     );
     // The draft PATCH did happen (proving the throw is AFTER the PATCH — the exact
@@ -543,7 +552,7 @@ test('push schedule failure on the SECOND item throws and stops (does not silent
   );
   try {
     await assert.rejects(
-      () => push(acct('246389711'), { contentDir: dir, registry: tgtRegistry() }),
+      () => push(acct('246389711'), { contentDir: dir, registry: tgtRegistry(), snapshotRoot: dir }),
       /schedule .*failed|400/,
     );
     const scheds = calls.filter((c) => c.method === 'POST' && c.url.includes('/schedule'));
@@ -582,7 +591,7 @@ test('bidirectional: pages-pull(embed) -> content-push(read embed) is a carrier-
   const calls = [];
   globalThis.fetch = makeFetch({ pages: [{ id: '700', slug: '' }], detail: {} }, calls);
   try {
-    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry() });
+    const res = await push(acct('246389711'), { contentDir: dir, registry: tgtRegistry(), snapshotRoot: dir });
     assert.equal(res.pushed, 1);
     const sent = JSON.parse(calls.find((c) => c.method === 'PATCH').body).widgets;
     // IDENTITY: what push sends equals the source carrier the pages adapter wrote —
