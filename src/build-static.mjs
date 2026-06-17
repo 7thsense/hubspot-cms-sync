@@ -14,13 +14,36 @@
 //   _headers                   cache + basic security headers
 
 import { mkdir, writeFile, cp, readFile, readdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join, dirname, basename, extname } from 'node:path';
+import { join, dirname, basename, extname, relative } from 'node:path';
 
 import { loadSite } from './lib/content-view.mjs';
-import { renderPage, renderPost, renderBlogListing, slugify, resolveStaticRefs } from './lib/render.mjs';
+import { renderPage, renderPost, renderBlogListing, slugify, resolveStaticRefs, makeEnv, preprocessHubl } from './lib/render.mjs';
+import { checkHublParity, formatParityError, collectTemplateSources } from './lib/hubl-parity.mjs';
 import { readRedirectSpecs } from './redirects.mjs';
+
+// HubL-parity GUARD. Before rendering a single page, scan every template/module source
+// for a filter or global the static render env (render.mjs::makeEnv) does NOT implement,
+// and THROW an actionable error if any are missing — instead of the cryptic mid-render
+// Nunjucks crash a missing construct otherwise causes (the failure mode that broke the
+// build for datetimeformat/escapejson/striptags and the `request` global). The available
+// filter/global names are reflected off a REAL env so they never drift from makeEnv.
+export function assertHublParity(siteDir, site) {
+  const env = makeEnv(siteDir, { site, opts: {} });
+  const sources = collectTemplateSources(
+    [join(siteDir, 'templates'), join(siteDir, 'modules')],
+    { readFileSync, readdirSync, statSync: null, join, relativeTo: (f) => relative(siteDir, f) },
+  ).map(({ file, src }) => ({ file, src: preprocessHubl(src) })); // scan the bytes Nunjucks compiles
+  const result = checkHublParity({
+    registeredFilters: Object.keys(env.filters),
+    registeredGlobals: Object.keys(env.globals),
+    sources,
+  });
+  if (result.missingFilters.length || result.missingGlobals.length) {
+    throw new Error(formatParityError(result));
+  }
+}
 
 async function loadTagSlugs(siteDir) {
   const map = {};
@@ -131,6 +154,9 @@ export async function buildStatic({ siteDir, outDir, baseUrl = '', assetBase = '
     : '';
 
   const site = await loadSite(siteDir);
+  // Fail fast on any template construct the static render env doesn't implement, BEFORE
+  // rendering — turns a cryptic mid-render Nunjucks crash into a named, actionable error.
+  assertHublParity(siteDir, site);
   const pages = site.pages.filter((p) => p.status === 'published');
   const posts = site.posts.filter((p) => p.status === 'published'); // already newest-first
   // Emit content-hashed css/js up front so get_asset_url() can rewrite references to the
