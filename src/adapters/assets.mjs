@@ -52,6 +52,7 @@ import { fileURLToPath } from 'node:url';
 
 import { hub } from '../lib/hub.mjs';
 import { stableStringify } from '../lib/canonical.mjs';
+import { fileToWire } from '../lib/posts-format.mjs';
 
 const API = 'https://api.hubapi.com';
 
@@ -257,10 +258,17 @@ export function saveRehosted(portalId, map) {
 
 // ───────────────────────────────────────────────────────────────────────────
 // Scan the committed canonical tree for `@asset:` references.
-// Sources: content/pages/*.json (widgets are embedded), content/blog/** *.json.
+// Sources:
+//   • content/pages/*.json, content/landing-pages/*.json (widgets are embedded),
+//     content/blog/** *.json — scanned as raw JSON text.
+//   • content/blog/posts/*.md — blog posts are stored as frontmatter+body MARKDOWN
+//     (posts-format.mjs), NOT JSON, so walkJson misses them. A post's cover lives in
+//     the `featuredImage` frontmatter field as `@asset:blog-covers/<slug>.png`, and
+//     the body may carry inline `@asset:` tokens too. We parse each .md back to its
+//     wire object (fileToWire) and scan the stringified object so EVERY field
+//     (featuredImage, summary, postBody, …) is covered, exactly like the JSON files.
 // theme/templates are ALSO @asset carriers, but the assets they reference are
-// likewise tokenized; reading every *.json under contentDir covers pages+blog,
-// and the optional `extraDirs` lets the orchestrator widen the scan.
+// likewise tokenized; reading every *.json under contentDir covers pages+blog json.
 // ───────────────────────────────────────────────────────────────────────────
 
 function walkJson(dir, acc) {
@@ -274,8 +282,37 @@ function walkJson(dir, acc) {
 }
 
 /**
+ * collectBlogPostAssetPaths(contentDir) -> string[] unique `<pathTail>`s
+ * referenced by `@asset:` tokens in blog post MARKDOWN files
+ * (content/blog/posts/*.md). Each post is parsed via posts-format.fileToWire and
+ * the resulting wire object is stringified, so frontmatter fields (featuredImage,
+ * summary, …) AND the post body are all scanned with the same token pattern the
+ * JSON scan uses. A malformed/unparseable .md is skipped (never aborts the scan).
+ * Exported for unit testing (no network).
+ */
+export function collectBlogPostAssetPaths(contentDir) {
+  const postsDir = join(contentDir, 'blog', 'posts');
+  if (!existsSync(postsDir)) return [];
+  const paths = new Set();
+  for (const ent of readdirSync(postsDir, { withFileTypes: true })) {
+    if (!ent.isFile() || !ent.name.endsWith('.md')) continue;
+    let wire;
+    try {
+      wire = fileToWire(readFileSync(join(postsDir, ent.name), 'utf8'));
+    } catch {
+      // unreadable or malformed frontmatter — skip this post, keep scanning.
+      continue;
+    }
+    // Stringify the whole wire object so featuredImage, summary, postBody, and any
+    // other @asset-bearing field are all covered, consistent with the JSON scan.
+    for (const p of extractAssetPaths(JSON.stringify(wire))) paths.add(p);
+  }
+  return [...paths];
+}
+
+/**
  * collectReferencedAssetPaths(contentDir) -> string[] unique `<pathTail>`s
- * referenced anywhere in the canonical content tree (pages + blog).
+ * referenced anywhere in the canonical content tree (pages + blog json + blog .md).
  */
 export function collectReferencedAssetPaths(contentDir) {
   const files = [];
@@ -293,6 +330,10 @@ export function collectReferencedAssetPaths(contentDir) {
     }
     for (const p of extractAssetPaths(text)) paths.add(p);
   }
+  // Blog posts are .md (frontmatter+body), invisible to the .json walk above —
+  // scan them too so a post cover `featuredImage: "@asset:blog-covers/x.png"` (and
+  // any body token) is collected/uploaded/registered like a page asset.
+  for (const p of collectBlogPostAssetPaths(contentDir)) paths.add(p);
   return [...paths];
 }
 
