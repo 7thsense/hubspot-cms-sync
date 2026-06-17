@@ -293,6 +293,18 @@ function makeEnv(siteDir, { site, opts }) {
   env.addGlobal('html_lang_dir', '');
   env.addGlobal('standard_header_includes', opts.headerIncludes || '');
   env.addGlobal('standard_footer_includes', opts.footerIncludes || '');
+  // HubSpot's `request` object — the static target only knows the path of the page it is
+  // rendering (templates use `request.path` for current-URL logic like active nav/topic
+  // pills). path_and_query/query/query_dict are present-but-empty so `x in request.*`
+  // checks never hit an undefined (the crash a missing `request` causes in nunjucks).
+  env.addGlobal('request', {
+    path: opts.requestPath || '',
+    path_and_query: opts.requestPath || '',
+    query: '',
+    query_dict: {},
+    referrer: '',
+    search: '',
+  });
 
   // blog_recent_posts('default', n) — HubL's recent-posts query. Backed by the
   // build-time neutral corpus, newest-first, projected to content shims.
@@ -324,7 +336,7 @@ export function renderPost(post, { siteDir, site, baseUrl = '', assetBase = '/as
   // The BlogPosting JSON-LD lives in the blog-post HubL template (rendered identically
   // on the HubSpot and static targets) — NOT injected here, which would double it on
   // the static side and leave HubSpot without it (the two-source divergence this fixes).
-  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, assetManifest, registry };
+  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, assetManifest, registry, requestPath: post.route };
   const env = makeEnv(siteDir, { site, opts });
   const context = {
     content: postContent(post, opts),
@@ -356,7 +368,7 @@ function pageContent(page, { baseUrl = '' } = {}) {
 // ---------------------------------------------------------------------------
 export function renderPage(page, { siteDir, site, baseUrl = '', assetBase = '/assets', lang = 'en',
   headerIncludes = '', footerIncludes = '', assetManifest, registry = null } = {}) {
-  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, assetManifest, registry };
+  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, assetManifest, registry, requestPath: page.route };
   const env = makeEnv(siteDir, { site, opts });
   const context = {
     content: pageContent(page, opts),
@@ -377,7 +389,7 @@ export function renderPage(page, { siteDir, site, baseUrl = '', assetBase = '/as
 export function renderBlogListing(posts, { siteDir, site, baseUrl = '', assetBase = '/assets', lang = 'en',
   headerIncludes = '', footerIncludes = '', tagSlugFor, route = '/blog', assetManifest, registry = null,
   basePath = null, pageNum = 1, pageSize = 0 } = {}) {
-  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, tagSlugFor, assetManifest, registry };
+  const opts = { baseUrl, assetBase, lang, headerIncludes, footerIncludes, tagSlugFor, assetManifest, registry, requestPath: route };
   const env = makeEnv(siteDir, { site, opts });
   // Pagination: pageSize <= 0 keeps the whole list on one page (back-compat). Otherwise
   // slice to the page window. blog_page_link mirrors HubSpot — page 1 is the listing
