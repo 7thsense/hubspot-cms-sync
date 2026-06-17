@@ -22,6 +22,7 @@ import {
   resolveAssetBytesPath,
   extractAssetPaths,
   collectReferencedAssetPaths,
+  collectBlogPostAssetPaths,
   listAssetFiles,
   uploadOptions,
   uploadTarget,
@@ -223,6 +224,157 @@ test('collectReferencedAssetPaths scans pages + blog json', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── blog .md frontmatter/body scanning (the gap this change closes) ──────────
+
+// Write a frontmatter+body blog post the way posts-format.wireToFile would, so
+// fileToWire round-trips it. Hand-built (not via wireToFile) to keep the fixture
+// explicit about what @asset tokens live where.
+function writePostMd(dir, file, { frontmatter, body = '' }) {
+  writeFileSync(join(dir, 'blog', 'posts', file), `---\n${frontmatter}---\n${body}`);
+}
+
+test('collectBlogPostAssetPaths finds a featuredImage @asset cover from .md frontmatter', () => {
+  const dir = tmpContentDir();
+  try {
+    // the exact recurring case: a post cover keyed with a SUBDIRECTORY token.
+    writePostMd(dir, 'why-email-timing.md', {
+      frontmatter:
+        'title: "Why timing matters"\n' +
+        'slug: "why-email-timing"\n' +
+        'status: published\n' +
+        'featuredImage: "@asset:blog-covers/why-email-timing.png"\n',
+      body: '<p>Body with no asset.</p>',
+    });
+    const got = collectBlogPostAssetPaths(dir);
+    assert.deepEqual(got, ['blog-covers/why-email-timing.png']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('collectBlogPostAssetPaths also scans the post BODY for @asset tokens', () => {
+  const dir = tmpContentDir();
+  try {
+    writePostMd(dir, 'inline.md', {
+      frontmatter:
+        'title: "Inline"\nslug: "inline"\nfeaturedImage: "@asset:blog-covers/inline.png"\n',
+      body: '<p>see <img src="@asset:blog-body/diagram.jpg"></p>',
+    });
+    const got = collectBlogPostAssetPaths(dir).sort();
+    assert.deepEqual(got, ['blog-body/diagram.jpg', 'blog-covers/inline.png']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('collectBlogPostAssetPaths skips a malformed .md (no frontmatter fence) without throwing', () => {
+  const dir = tmpContentDir();
+  try {
+    // no fence -> fileToWire throws -> this post is skipped, scan continues.
+    writeFileSync(join(dir, 'blog', 'posts', 'broken.md'), 'just text @asset:blog-covers/broken.png');
+    writePostMd(dir, 'good.md', {
+      frontmatter: 'title: "Good"\nfeaturedImage: "@asset:blog-covers/good.png"\n',
+    });
+    const got = collectBlogPostAssetPaths(dir);
+    assert.deepEqual(got, ['blog-covers/good.png']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('collectBlogPostAssetPaths returns [] when there is no blog/posts dir', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'assets-test-noblog-'));
+  try {
+    mkdirSync(join(dir, 'pages'), { recursive: true });
+    assert.deepEqual(collectBlogPostAssetPaths(dir), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('collectReferencedAssetPaths unions page json AND blog .md frontmatter covers', () => {
+  const dir = tmpContentDir();
+  try {
+    writeFileSync(
+      join(dir, 'pages', 'home.json'),
+      JSON.stringify({ widgets: { hero: { body: { img: '@asset:Hero.png' } } } }),
+    );
+    writePostMd(dir, 'post.md', {
+      frontmatter: 'title: "P"\nfeaturedImage: "@asset:blog-covers/post.png"\n',
+      body: '<p>x</p>',
+    });
+    const got = collectReferencedAssetPaths(dir).sort();
+    // the blog cover (.md frontmatter) is now collected alongside the page asset.
+    assert.deepEqual(got, ['Hero.png', 'blog-covers/post.png']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('push uploads a blog .md featuredImage cover whose bytes are committed, and registers it', async (t) => {
+  // End-to-end: a blog post .md references its cover via frontmatter featuredImage;
+  // the bytes are committed under content/assets/<key>. The assets adapter must now
+  // DISCOVER that token from the .md (previously it did not), upload the bytes, and
+  // register the target url so resolve() restores the cover on push.
+  const dir = tmpContentDir();
+  const key = 'blog-covers/why-email-timing.png';
+  mkdirSync(join(dir, 'assets', 'blog-covers'), { recursive: true });
+  writeFileSync(join(dir, 'assets', 'blog-covers', 'why-email-timing.png'), 'COVERPNG');
+  writePostMd(dir, 'why-email-timing.md', {
+    frontmatter: `title: "T"\nslug: "why-email-timing"\nfeaturedImage: "@asset:${key}"\n`,
+    body: '<p>body</p>',
+  });
+
+  let uploadedFolder = null;
+  let uploadedName = null;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    uploadedFolder = init.body.get('folderPath');
+    uploadedName = init.body.get('fileName');
+    return { ok: true, json: async () => ({ url: `https://tgt/synced-assets/${key}` }) };
+  };
+  t.after(() => {
+    globalThis.fetch = realFetch;
+    rmSync(dir, { recursive: true, force: true });
+    const f = join(process.cwd(), '.sync-state', `${ACCT.portalId}.rehosted.json`);
+    if (existsSync(f)) rmSync(f, { force: true });
+  });
+
+  const registry = emptyRegistry(ACCT.portalId);
+  const { pushed } = await push(ACCT, { contentDir: dir, registry });
+  assert.equal(pushed, 1, 'the blog .md cover must be discovered and uploaded');
+  assert.equal(uploadedFolder, '/synced-assets/blog-covers');
+  assert.equal(uploadedName, 'why-email-timing.png');
+  // resolve() restores the cover from this:
+  assert.equal(registry.assets[key], `https://tgt/synced-assets/${key}`);
+});
+
+test('push HARD-FAILS on a blog .md cover referenced but missing committed bytes', async (t) => {
+  // The recurring risk: a post .md names a cover that was never pulled into
+  // content/assets/. Discovery now SEES it, so the data-loss guard fires instead of
+  // silently leaving the cover unresolved.
+  const dir = tmpContentDir();
+  writePostMd(dir, 'orphan.md', {
+    frontmatter: 'title: "Orphan"\nfeaturedImage: "@asset:blog-covers/orphan.png"\n',
+  });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error('should not upload missing bytes');
+  };
+  t.after(() => {
+    globalThis.fetch = realFetch;
+    rmSync(dir, { recursive: true, force: true });
+    const f = join(process.cwd(), '.sync-state', `${ACCT.portalId}.rehosted.json`);
+    if (existsSync(f)) rmSync(f, { force: true });
+  });
+
+  const registry = emptyRegistry(ACCT.portalId);
+  await assert.rejects(
+    () => push(ACCT, { contentDir: dir, registry }),
+    /missing committed bytes.*@asset:blog-covers\/orphan\.png/s,
+  );
 });
 
 test('listAssetFiles returns tails with / separators, skipping manifest.json', () => {
