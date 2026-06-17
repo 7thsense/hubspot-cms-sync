@@ -94,12 +94,25 @@ function localTargets(src) {
   return locals;
 }
 
+// Concatenate just the HubL expression/statement bodies (inside {{ }} / {% %}),
+// comments and strings removed. Used so the FILTER scan never sees JavaScript outside
+// the delimiters — e.g. the hero module's `<script>` bitwise `_seed | t`, which is NOT
+// a HubL filter pipe.
+export function delimiterBodies(src) {
+  const text = String(src).replace(COMMENT_RE, '');
+  let out = '';
+  for (const m of text.matchAll(DELIM_RE)) out += ` ${(m[1] ?? m[2] ?? '').replace(STRING_RE, "''")}`;
+  return out;
+}
+
 export function extractGlobals(src) {
   const text = String(src).replace(COMMENT_RE, '');
   const locals = localTargets(text);
   const found = new Set();
   for (const m of text.matchAll(DELIM_RE)) {
-    const body = (m[1] ?? m[2] ?? '').replace(STRING_RE, "''");
+    // Strip string literals AND filter applications (`| name`) — a filter name like
+    // `default` in `x|default('y')` is handled by the filter scan, not a global.
+    const body = (m[1] ?? m[2] ?? '').replace(STRING_RE, "''").replace(/\|\s*[A-Za-z_]\w*/g, '|');
     for (const im of body.matchAll(IDENT_RE)) {
       const name = im[1];
       if (KEYWORDS.has(name)) continue;
@@ -127,7 +140,9 @@ export function checkHublParity({ registeredFilters, registeredGlobals, sources 
   const missingFilters = [];
   const missingGlobals = [];
   for (const { file, src } of sources) {
-    for (const name of extractFilters(src)) {
+    // Filters are scanned ONLY inside the HubL delimiters (delimiterBodies), so a
+    // bitwise `|` in a template's <script> JS is never mistaken for a filter pipe.
+    for (const name of extractFilters(delimiterBodies(src))) {
       if (!filters.has(name)) missingFilters.push({ file, name });
     }
     for (const name of extractGlobals(src)) {

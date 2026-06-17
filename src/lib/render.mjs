@@ -310,6 +310,10 @@ function makeEnv(siteDir, { site, opts }) {
   // build-time neutral corpus, newest-first, projected to content shims.
   env.addGlobal('blog_recent_posts', (_group, count) =>
     (site?.posts || []).slice(0, count || 5).map((p) => postContent(p, opts)));
+  // Default blog pagination link — renderBlogListing overrides this with the route-aware
+  // version. Registered here so the HubL-parity guard (which reflects off makeEnv) sees
+  // it as available, and any non-listing template using it still resolves.
+  env.addGlobal('blog_page_link', (n) => (Number(n) <= 1 ? '/blog' : `/blog/page/${n}`));
 
   env.addExtension('ModuleExtension', new ModuleExtension(env, siteDir, opts));
 
