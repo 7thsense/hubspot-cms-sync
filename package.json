@@ -1,6 +1,6 @@
 {
   "name": "hubspot-cms-sync",
-  "version": "0.24.0",
+  "version": "0.25.0",
   "description": "Git-backed bidirectional sync for HubSpot CMS themes, content, blogs, forms, and assets.",
   "type": "module",
   "license": "MIT",

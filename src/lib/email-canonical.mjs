@@ -13,7 +13,11 @@ import {
   isCommittedEmailTemplatePath,
 } from './email-manifest.mjs';
 import { mergeBlocksIntoCampaign } from './email-blocks.mjs';
-import { buildDnDFlexAreas, normalizeDnDPushWidgets } from './email-dnd.mjs';
+import {
+  buildDnDFlexAreas,
+  DEFAULT_EMAIL_STYLE_SETTINGS,
+  normalizeDnDPushWidgets,
+} from './email-dnd.mjs';
 
 export const EMAIL_SIDECAR_FILES = new Set([
   'template-paths.json',
@@ -331,11 +335,15 @@ export function buildEmailPushPayload(canon, {
   if (isDnD) {
     widgets = normalizeDnDPushWidgets(widgets, { previewText: canon.previewText });
   }
-  const content = { templatePath, widgets };
+  const content = {
+    templatePath,
+    widgets,
+    styleSettings: canon.content?.styleSettings ?? DEFAULT_EMAIL_STYLE_SETTINGS,
+  };
   if (isDnD) {
     content.flexAreas = buildDnDFlexAreas(widgets);
   }
-  return {
+  const payload = {
     name: canon.name,
     subject: canon.subject,
     from: {
@@ -344,6 +352,12 @@ export function buildEmailPushPayload(canon, {
     },
     content,
   };
+  if (isDnD) {
+    payload.emailTemplateMode = 'DRAG_AND_DROP';
+  } else if (canon.emailTemplateMode) {
+    payload.emailTemplateMode = canon.emailTemplateMode;
+  }
+  return payload;
 }
 
 /**
@@ -398,6 +412,9 @@ export function canonicalEmail(raw, opts = {}) {
     content: {
       templatePath: portableTemplatePath,
       widgets,
+      ...(raw?.content?.styleSettings
+        ? { styleSettings: raw.content.styleSettings }
+        : {}),
     },
     webversion: {
       enabled: raw?.webversion?.enabled ?? false,

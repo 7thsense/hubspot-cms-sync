@@ -22,7 +22,7 @@ export function paragraphModuleToHtml(mod) {
   const text = mod?.text ?? mod?.html ?? '';
   if (typeof text !== 'string' || !text.trim()) return '';
   if (text.includes('<')) return text;
-  return `<p>${escHtml(text)}</p>`;
+  return `<p style="line-height: 1.5;">${escHtml(text)}</p>`;
 }
 
 /**

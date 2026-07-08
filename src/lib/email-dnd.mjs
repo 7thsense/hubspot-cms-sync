@@ -10,6 +10,35 @@ import {
 
 export const HUBSPOT_DND_FALLBACK_TEMPLATE = '@hubspot/email/dnd/Start_from_scratch.html';
 
+// HubSpot default DnD email module type ids (stable on a portal; required for editor render).
+export const HUBSPOT_DND_MODULE_IDS = {
+  emailBody: 1155639,
+  emailLinkedImage: 1367093,
+  emailCanSpam: 2869621,
+};
+
+/** Seventh Sense / Everything Email house style (prod portal defaults). */
+export const DEFAULT_EMAIL_STYLE_SETTINGS = {
+  backgroundColor: '#f2f2f2',
+  bodyBorderColor: '#cccccc',
+  bodyBorderColorChoice: 'BORDER_MANUAL',
+  bodyBorderWidth: 1,
+  bodyColor: '#ffffff',
+  headingOneFont: { font: 'Arial, sans-serif', size: 24 },
+  headingTwoFont: { size: 22 },
+  linksFont: {},
+  primaryFont: 'Arial, sans-serif',
+  primaryFontColor: '#444444',
+  primaryFontSize: 15,
+};
+
+const BODY_MODULE_WRAPPER_CSS = {
+  'padding-bottom': '10px',
+  'padding-left': '20px',
+  'padding-right': '20px',
+  'padding-top': '10px',
+};
+
 const LOGO_KEYS = new Set(['logo_image', 'logo', 'email_logo']);
 const FOOTER_KEYS = new Set(['email_can_spam', 'email_footer']);
 
@@ -45,6 +74,79 @@ export function countBodyModules(widgets = {}) {
     (k) => k === 'hs_email_body' || /^hs_email_body_\d+$/.test(k),
   ).length;
   return Math.max(1, n);
+}
+
+/**
+ * Add default paragraph line-height when Beefree/git HTML omits inline styles.
+ * @param {string} html
+ * @returns {string}
+ */
+export function normalizeEmailBodyHtml(html) {
+  const s = String(html || '');
+  if (!s.trim()) return s;
+  if (/<p[\s>]/i.test(s)) {
+    return s.replace(/<p(?![^>]*style=)([^>]*)>/gi, '<p style="line-height: 1.5;"$1>');
+  }
+  if (/<(?:div|h[1-6])\b/i.test(s)) return s;
+  return `<p style="line-height: 1.5;">${s}</p>`;
+}
+
+/**
+ * Resolve HubSpot module_id for a DnD email widget name.
+ * @param {string} name
+ * @returns {number|null}
+ */
+export function dndModuleIdForWidget(name) {
+  if (name === 'preview_text') return null;
+  if (LOGO_KEYS.has(name) || name.startsWith('image_')) {
+    return HUBSPOT_DND_MODULE_IDS.emailLinkedImage;
+  }
+  if (name === 'hs_email_body' || /^hs_email_body_\d+$/.test(name)) {
+    return HUBSPOT_DND_MODULE_IDS.emailBody;
+  }
+  if (FOOTER_KEYS.has(name)) return HUBSPOT_DND_MODULE_IDS.emailCanSpam;
+  return null;
+}
+
+/**
+ * Attach module_id / id / css fields HubSpot's DnD editor expects on module widgets.
+ * Skips widgets that already carry module_id (pulled canonical records).
+ *
+ * @param {Record<string, object>} widgets
+ * @returns {Record<string, object>}
+ */
+export function attachDnDModuleIds(widgets = {}) {
+  const out = {};
+  for (const [name, raw] of Object.entries(widgets)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const w = deepClone(raw);
+    if (w.type === 'text' || name === 'preview_text') {
+      out[name] = w;
+      continue;
+    }
+    const moduleId = w.module_id ?? dndModuleIdForWidget(name);
+    if (moduleId != null && w.module_id == null) {
+      w.module_id = moduleId;
+      w.id = w.id ?? name;
+      w.css = w.css ?? {};
+      w.child_css = w.child_css ?? {};
+      if (w.body && typeof w.body === 'object' && w.body.module_id == null) {
+        w.body = { ...w.body, module_id: moduleId };
+      }
+    }
+    const isBody = name === 'hs_email_body' || /^hs_email_body_\d+$/.test(name);
+    if (isBody && w.body && typeof w.body === 'object') {
+      if (w.body.hs_wrapper_css == null) {
+        w.body.hs_enable_module_padding = w.body.hs_enable_module_padding ?? true;
+        w.body.hs_wrapper_css = { ...BODY_MODULE_WRAPPER_CSS };
+      }
+      if (typeof w.body.html === 'string') {
+        w.body.html = normalizeEmailBodyHtml(w.body.html);
+      }
+    }
+    out[name] = w;
+  }
+  return out;
 }
 
 /**
@@ -108,53 +210,38 @@ export function normalizeDnDPushWidgets(widgets, { previewText } = {}) {
     out[name] = w;
   }
 
-  return out;
+  return attachDnDModuleIds(out);
 }
-
-const FLEX_BREAKPOINT_STYLE = {
-  backgroundColor: null,
-  backgroundImage: null,
-  backgroundImageType: null,
-  backgroundType: 'CONTENT',
-  borderBottom: null,
-  borderBottomLeftRadius: null,
-  borderBottomRightRadius: null,
-  borderLeft: null,
-  borderRight: null,
-  borderTop: null,
-  borderTopLeftRadius: null,
-  borderTopRightRadius: null,
-  hidden: null,
-  marginBottom: null,
-  marginTop: null,
-  paddingBottom: '0px',
-  paddingTop: '0px',
-  verticalAlign: null,
-};
 
 const FLEX_SECTION_STYLE = {
   backgroundColor: null,
   backgroundImage: null,
   backgroundImageType: null,
   backgroundType: 'CONTENT',
-  breakpointStyles: {
-    default: { ...FLEX_BREAKPOINT_STYLE },
-    mobile: { ...FLEX_BREAKPOINT_STYLE },
-  },
   paddingBottom: '0px',
   paddingTop: '0px',
-  stack: 'LEFT_TO_RIGHT',
 };
 
-/**
- * Build flexAreas.main so DnD preview/editor renders pushed widgets (not just the
- * flat widgets map). preview_text is excluded — it is not a dnd section module.
- *
- * @param {Record<string, object>} widgets normalized DnD widgets
- * @returns {{ main: object }}
- */
-export function buildDnDFlexAreas(widgets = {}) {
-  const keys = Object.keys(widgets)
+const FLEX_FOOTER_SECTION_STYLE = {
+  ...FLEX_SECTION_STYLE,
+  paddingBottom: '10px',
+  paddingTop: '10px',
+};
+
+function flexSection(id, columnId, widgetKeys, style = FLEX_SECTION_STYLE) {
+  return {
+    id,
+    style: { ...style },
+    columns: [{
+      id: columnId,
+      width: 12,
+      widgets: widgetKeys,
+    }],
+  };
+}
+
+function flexWidgetBuckets(widgets = {}) {
+  const sorted = Object.keys(widgets)
     .filter((k) => k !== 'preview_text')
     .sort((a, b) => {
       const [ra, sa] = dndWidgetRank(a);
@@ -162,22 +249,72 @@ export function buildDnDFlexAreas(widgets = {}) {
       return ra - rb || sa - sb || a.localeCompare(b);
     });
 
-  const sections = keys.map((key, index) => ({
-    id: `section-${index}`,
-    path: null,
-    style: { ...FLEX_SECTION_STYLE },
-    columns: [{
-      id: `column-${index}-0`,
-      width: 12,
-      widgets: [key],
-    }],
-  }));
+  const logo = [];
+  const body = [];
+  const footer = [];
+  const other = [];
+
+  for (const key of sorted) {
+    const [rank] = dndWidgetRank(key);
+    if (rank === 1) logo.push(key);
+    else if (rank === 2) body.push(key);
+    else if (rank === 4) footer.push(key);
+    else other.push(key);
+  }
+
+  return { logo, body, footer, other };
+}
+
+/**
+ * Build flexAreas.main so DnD preview/editor renders pushed widgets (not just the
+ * flat widgets map). preview_text is excluded — it is not a dnd section module.
+ *
+ * Matches HubSpot's native layout: logo section, single body column, footer section,
+ * with boxed=true so styleSettings (background, fonts) apply in the editor.
+ *
+ * @param {Record<string, object>} widgets normalized DnD widgets
+ * @returns {{ main: object }}
+ */
+export function buildDnDFlexAreas(widgets = {}) {
+  const { logo, body, footer, other } = flexWidgetBuckets(widgets);
+  const sections = [];
+  let sectionIndex = 0;
+
+  if (logo.length > 0) {
+    sections.push(flexSection(
+      `section_${sectionIndex}`,
+      `column_${sectionIndex}_0`,
+      logo,
+    ));
+    sectionIndex += 1;
+  }
+
+  const bodyWidgets = [...body, ...other];
+  if (bodyWidgets.length > 0) {
+    sections.push(flexSection(
+      `section_${sectionIndex}`,
+      `column_${sectionIndex}_0`,
+      bodyWidgets,
+    ));
+    sectionIndex += 1;
+  }
+
+  if (footer.length > 0) {
+    sections.push(flexSection(
+      `section_${sectionIndex}`,
+      `column_${sectionIndex}_0`,
+      footer,
+      FLEX_FOOTER_SECTION_STYLE,
+    ));
+  }
+
+  const boxLastElementIndex = sections.length > 1 ? 1 : 0;
 
   return {
     main: {
-      boxFirstElementIndex: null,
-      boxLastElementIndex: null,
-      boxed: false,
+      boxFirstElementIndex: sections.length > 0 ? 0 : null,
+      boxLastElementIndex: sections.length > 0 ? boxLastElementIndex : null,
+      boxed: sections.length > 0,
       isSingleColumnFullWidth: false,
       sections,
     },

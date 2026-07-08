@@ -129,9 +129,52 @@ test('buildEmailPushPayload merges blocks when contentDir provided', () => {
     assert.ok(body.content.widgets.hs_email_body);
     assert.equal(body.content.widgets.hs_email_body.type, 'module');
     assert.ok(body.content.widgets.hs_email_body.order > 0);
+    assert.equal(body.emailTemplateMode, 'DRAG_AND_DROP');
+    assert.ok(body.content.styleSettings?.backgroundColor);
+    assert.equal(body.content.flexAreas?.main?.boxed, true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('buildEmailPushPayload matches prod-verified DnD editor shape', () => {
+  const canon = {
+    key: 'inside-insights',
+    name: 'Inside Insights',
+    subject: 'Subj',
+    emailTemplateMode: 'DRAG_AND_DROP',
+    from: { fromName: 'Mike', replyTo: 'mike@example.com' },
+    content: {
+      templatePath: '@hubspot/email/dnd/Start_from_scratch.html',
+      widgets: {
+        hs_email_body: { type: 'rich_text', body: { html: '<p>Hi</p>' } },
+        logo_image: { type: 'module', body: { img: { src: '@asset:logo.jpg' } } },
+        email_can_spam: { type: 'module', body: { align: 'center' } },
+      },
+    },
+  };
+  const registry = emptyRegistry('529456');
+  registry.assets['logo.jpg'] = 'https://cdn.example/logo.jpg';
+  const body = buildEmailPushPayload(canon, {
+    templatePaths: {},
+    registry,
+    manifestEntry: { desiredState: 'draft' },
+  });
+
+  assert.equal(body.emailTemplateMode, 'DRAG_AND_DROP');
+  assert.equal(body.content.templatePath, '@hubspot/email/dnd/Start_from_scratch.html');
+  assert.equal(body.content.styleSettings.primaryFont, 'Arial, sans-serif');
+  assert.equal(body.content.flexAreas.main.boxed, true);
+  assert.equal(body.content.flexAreas.main.boxFirstElementIndex, 0);
+  assert.equal(body.content.flexAreas.main.boxLastElementIndex, 1);
+  assert.equal(body.content.flexAreas.main.sections.length, 3);
+  assert.deepEqual(
+    body.content.flexAreas.main.sections.map((s) => s.columns[0].widgets),
+    [['logo_image'], ['hs_email_body'], ['email_can_spam']],
+  );
+  assert.equal(body.content.widgets.hs_email_body.module_id, 1155639);
+  assert.equal(body.content.widgets.logo_image.module_id, 1367093);
+  assert.equal(body.content.widgets.email_can_spam.module_id, 2869621);
 });
 
 test('buildEmailPushPayload resolves verified generated_layouts mapping', () => {

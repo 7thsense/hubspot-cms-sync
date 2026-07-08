@@ -1,7 +1,8 @@
 # hubspot-cms-sync
 
 Git-backed bidirectional HubSpot CMS sync for themes, site pages, page module
-content, blogs, forms, marketing emails (pull v1), and assets.
+content, blogs, forms, marketing emails (pull + manifest-scoped DnD push), and
+assets.
 
 The package provides the `hcms` CLI. The long binary name
 `hubspot-cms-sync` is also installed, but examples use `hcms` for consistency.
@@ -40,11 +41,16 @@ hcms republish dev --all --blog
 hcms corpus
 hcms manifest validate
 hcms emails inventory prod   # read-only spike → .sync-state/email-spike/
+hcms push dev --only assets,email-templates,emails   # DnD campaign push
+hcms email-import beefree …   # Beefree → campaign + shell scaffold
 ```
 
-Marketing email **pull** is implemented; **push** is not yet. Pull only manifest-
-listed `emails[]` unless `HCMS_EMAIL_PULL_ALL=1`. See
-[`docs/EMAIL_SYNC_PLAN.md`](docs/EMAIL_SYNC_PLAN.md).
+Marketing email **pull** and **manifest-scoped DnD push** are implemented.
+Pull only manifest-listed `emails[]` unless `HCMS_EMAIL_PULL_ALL=1`. Push
+creates/updates drafts for manifest entries with `desiredState` in
+`draft` / `draftCopy` / `workflow`. See
+[`docs/EMAIL_API_CONTRACT.md`](docs/EMAIL_API_CONTRACT.md) for the DnD editor
+requirements (`emailTemplateMode`, `styleSettings`, `flexAreas`, `module_id`).
 
 `hcms redirects` is dry-run by default. Pass `--apply` to create or update
 HubSpot URL redirects from the configured `redirectsFile`, or pass `--file` to

@@ -17,8 +17,11 @@ function loadFixture(name) {
   return JSON.parse(readFileSync(join(import.meta.dirname, '..', 'fixtures', 'beefree', name), 'utf8'));
 }
 
-test('paragraphModuleToHtml wraps plain text', () => {
-  assert.equal(paragraphModuleToHtml({ text: 'Hello' }), '<p>Hello</p>');
+test('paragraphModuleToHtml wraps plain text with default line-height', () => {
+  assert.equal(
+    paragraphModuleToHtml({ text: 'Hello' }),
+    '<p style="line-height: 1.5;">Hello</p>',
+  );
   assert.equal(paragraphModuleToHtml({ html: '<p>Hi</p>' }), '<p>Hi</p>');
 });
 
