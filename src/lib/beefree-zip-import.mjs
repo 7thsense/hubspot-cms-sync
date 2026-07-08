@@ -328,6 +328,7 @@ export function writeBeefreeZipProvenance({
   key,
   exportPath,
   html,
+  sourceHtml,
   assets,
   sourceType,
   write = false,
@@ -347,7 +348,7 @@ export function writeBeefreeZipProvenance({
 
   if (write) {
     mkdirSync(importDir, { recursive: true });
-    writeFileSync(htmlArchive, html);
+    writeFileSync(htmlArchive, sourceHtml ?? html);
     writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`);
     if (sourceType === 'zip' && existsSync(exportPath)) {
       copyFileSync(exportPath, zipArchive);

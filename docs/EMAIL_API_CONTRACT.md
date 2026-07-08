@@ -249,6 +249,13 @@ backgrounds/fonts. Visual design lives in widget HTML + `styleSettings`.
 Re-import after editing in Beefree: re-export zip, run the same command with
 `--write` (overwrites campaign + assets + provenance).
 
+**Campaign copy:** add `imports/beefree/<key>/content.spec.json` with
+`columnPatches` (per-card title/body, anchored by template image filename) and
+`replacements` (ordered find/replace on the raw Beefree HTML). The importer
+applies the spec automatically; `source.index.html` stays the pristine Beefree
+export and `customized.index.html` holds the branded result. Re-apply copy only
+with `hcms emails import beefree-apply-content --key <key> --write`.
+
 ## Verification
 
 - **Unit:** `buildEmailPushPayload` golden shape, `buildDnDFlexAreas`, `attachDnDModuleIds`

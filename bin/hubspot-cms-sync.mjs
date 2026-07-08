@@ -228,6 +228,8 @@ async function main(argv = process.argv) {
     .option('--subject <subject>', 'email subject line')
     .option('--preview-text <text>', 'inbox preview text')
     .option('--template-path <path>', 'HubSpot DnD shell (default Start_from_scratch)')
+    .option('--content-spec <path>', 'override content.spec.json path')
+    .option('--no-content-spec', 'skip imports/beefree/<key>/content.spec.json if present')
     .option('--write', 'write files to repo (default dry-run)')
     .action(async (exportPath, options) => {
       const config = await withConfig(program.opts());
@@ -239,6 +241,32 @@ async function main(argv = process.argv) {
         ...(options.subject ? ['--subject', options.subject] : []),
         ...(options.previewText ? ['--preview-text', options.previewText] : []),
         ...(options.templatePath ? ['--template-path', options.templatePath] : []),
+        ...(options.contentSpec ? ['--content-spec', options.contentSpec] : []),
+        ...(options.noContentSpec ? ['--no-content-spec'] : []),
+        ...(options.write ? ['--write'] : []),
+      ];
+      const code = await emailImportMain(argv, config);
+      if (code) process.exitCode = code;
+    });
+
+  importCmd
+    .command('beefree-apply-content')
+    .description('re-apply imports/beefree/<key>/content.spec.json to campaign JSON')
+    .requiredOption('--key <key>', 'campaign logical key')
+    .argument('[spec]', 'optional path to content.spec.json')
+    .option('--name <name>', 'email display name')
+    .option('--subject <subject>', 'email subject line')
+    .option('--preview-text <text>', 'inbox preview text')
+    .option('--write', 'write updated campaign + customized.index.html')
+    .action(async (spec, options) => {
+      const config = await withConfig(program.opts());
+      const argv = [
+        'beefree-apply-content',
+        ...(spec ? [spec] : []),
+        '--key', options.key,
+        ...(options.name ? ['--name', options.name] : []),
+        ...(options.subject ? ['--subject', options.subject] : []),
+        ...(options.previewText ? ['--preview-text', options.previewText] : []),
         ...(options.write ? ['--write'] : []),
       ];
       const code = await emailImportMain(argv, config);

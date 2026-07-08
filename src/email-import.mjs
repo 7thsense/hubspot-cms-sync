@@ -15,6 +15,10 @@ import {
   stageBeefreeAssets,
   writeBeefreeZipProvenance,
 } from './lib/beefree-zip-import.mjs';
+import {
+  applyBeefreeContentSpec,
+  loadBeefreeContentSpec,
+} from './lib/beefree-content.mjs';
 
 export function importBeefreeFromFile(schemaPath, opts = {}) {
   const {
@@ -54,6 +58,28 @@ export function importBeefreeFromFile(schemaPath, opts = {}) {
   };
 }
 
+function resolveContentSpecPath(root, key, contentSpecPath) {
+  if (contentSpecPath) return contentSpecPath;
+  const defaultPath = join(root, 'imports', 'beefree', key, 'content.spec.json');
+  return existsSync(defaultPath) ? defaultPath : null;
+}
+
+function applyOptionalContentSpec(html, { root, key, contentSpecPath, applyContent }) {
+  const specPath = applyContent
+    ? resolveContentSpecPath(root, key, contentSpecPath)
+    : null;
+  if (!specPath) return { html, contentNotes: [] };
+  const spec = loadBeefreeContentSpec(specPath);
+  const result = applyBeefreeContentSpec(html, spec);
+  const notes = [
+    `content spec: ${specPath} (${result.applied} replacements applied)`,
+  ];
+  if (result.skipped.length > 0) {
+    notes.push(`content spec skipped ${result.skipped.length} missing fragment(s)`);
+  }
+  return { html: result.html, contentNotes: notes, customizedPath: specPath };
+}
+
 export function importBeefreeZipFromFile(exportPath, opts = {}) {
   const {
     key,
@@ -63,13 +89,18 @@ export function importBeefreeZipFromFile(exportPath, opts = {}) {
     subject,
     previewText,
     templatePath,
+    contentSpecPath,
+    applyContent = true,
   } = opts;
 
   if (!key) throw new Error('import beefree-zip: --key is required');
 
   const source = readBeefreeExport(exportPath);
+  const customized = applyOptionalContentSpec(source.html, {
+    root, key, contentSpecPath, applyContent,
+  });
   const projected = projectBeefreeZipImport({
-    html: source.html,
+    html: customized.html,
     key,
     name,
     subject,
@@ -89,6 +120,7 @@ export function importBeefreeZipFromFile(exportPath, opts = {}) {
 
   const notes = [
     ...projected.notes,
+    ...customized.contentNotes,
     `staged ${assets.length} image(s) under content/assets/${projected.assetPrefix}/`,
   ];
 
@@ -96,15 +128,21 @@ export function importBeefreeZipFromFile(exportPath, opts = {}) {
     importDir,
     key,
     exportPath,
-    html: source.html,
+    html: customized.html,
+    sourceHtml: source.html,
     assets,
     sourceType: source.sourceType,
     write,
   });
 
+  const customizedHtmlPath = join(importDir, 'customized.index.html');
+
   if (write) {
     mkdirSync(dirname(campaignPath), { recursive: true });
     writeFileSync(campaignPath, stableStringify(projected.campaign));
+    if (customized.contentNotes.length > 0) {
+      writeFileSync(customizedHtmlPath, customized.html);
+    }
   }
 
   return {
@@ -148,9 +186,85 @@ function parseCommonImportArgs(args, config) {
   };
 }
 
+export function refreshBeefreeCampaignContent(key, opts = {}) {
+  const {
+    root = process.cwd(),
+    write = false,
+    name,
+    subject,
+    previewText,
+    templatePath,
+    contentSpecPath,
+  } = opts;
+  if (!key) throw new Error('refresh beefree content: --key is required');
+
+  const importDir = join(root, 'imports', 'beefree', key);
+  const htmlPath = join(importDir, 'source.index.html');
+  if (!existsSync(htmlPath)) {
+    throw new Error(`missing ${htmlPath} — run beefree-zip import first`);
+  }
+
+  const html = readFileSync(htmlPath, 'utf8');
+  const customized = applyOptionalContentSpec(html, {
+    root, key, contentSpecPath, applyContent: true,
+  });
+  const projected = projectBeefreeZipImport({
+    html: customized.html,
+    key,
+    name,
+    subject,
+    previewText,
+    templatePath,
+  });
+
+  const campaignPath = join(root, 'content', 'emails', 'campaigns', `${key}.json`);
+  const customizedHtmlPath = join(importDir, 'customized.index.html');
+
+  if (write) {
+    mkdirSync(dirname(campaignPath), { recursive: true });
+    writeFileSync(campaignPath, stableStringify(projected.campaign));
+    writeFileSync(customizedHtmlPath, customized.html);
+  }
+
+  return {
+    campaignPath,
+    customizedHtmlPath,
+    notes: customized.contentNotes,
+  };
+}
+
 export async function main(argv = process.argv.slice(2), config = {}) {
   const args = [...argv];
   const sub = args[0];
+
+  if (sub === 'beefree-apply-content') {
+    const rest = args.slice(1);
+    const {
+      write, key, name, subject, previewText, templatePath, positional, root,
+    } = parseCommonImportArgs(rest, config);
+    const contentSpecPath = positional[0] ?? undefined;
+    if (!key) {
+      console.error(
+        'usage: hcms emails import beefree-apply-content --key <campaign> '
+        + '[content.spec.json] [--write]',
+      );
+      return 2;
+    }
+    const result = refreshBeefreeCampaignContent(key, {
+      root,
+      write,
+      name,
+      subject,
+      previewText,
+      templatePath,
+      contentSpecPath,
+    });
+    console.log(`campaign: ${result.campaignPath}`);
+    console.log(`customized: ${result.customizedHtmlPath}`);
+    for (const n of result.notes) console.log(`  note: ${n}`);
+    if (!write) console.log('(dry-run — pass --write to update campaign)');
+    return 0;
+  }
 
   if (sub === 'beefree-zip') {
     const rest = args.slice(1);
@@ -166,6 +280,9 @@ export async function main(argv = process.argv.slice(2), config = {}) {
       );
       return 2;
     }
+    const noContent = rest.includes('--no-content-spec');
+    const contentSpecIdx = rest.indexOf('--content-spec');
+    const contentSpecPath = contentSpecIdx >= 0 ? rest[contentSpecIdx + 1] : undefined;
     const result = importBeefreeZipFromFile(exportPath, {
       key,
       root,
@@ -174,6 +291,8 @@ export async function main(argv = process.argv.slice(2), config = {}) {
       subject,
       previewText,
       templatePath,
+      contentSpecPath,
+      applyContent: !noContent,
     });
     console.log(`campaign: ${result.campaignPath}`);
     console.log(`provenance: ${result.importDir}`);
