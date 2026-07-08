@@ -219,6 +219,32 @@ async function main(argv = process.argv) {
       if (code) process.exitCode = code;
     });
 
+  importCmd
+    .command('beefree-zip')
+    .description('import Beefree HTML+images zip export → DnD campaign + content/assets')
+    .argument('<export>', 'path to .zip export or extracted directory (index.html + images/)')
+    .requiredOption('--key <key>', 'campaign logical key')
+    .option('--name <name>', 'email display name')
+    .option('--subject <subject>', 'email subject line')
+    .option('--preview-text <text>', 'inbox preview text')
+    .option('--template-path <path>', 'HubSpot DnD shell (default Start_from_scratch)')
+    .option('--write', 'write files to repo (default dry-run)')
+    .action(async (exportPath, options) => {
+      const config = await withConfig(program.opts());
+      const argv = [
+        'beefree-zip',
+        exportPath,
+        '--key', options.key,
+        ...(options.name ? ['--name', options.name] : []),
+        ...(options.subject ? ['--subject', options.subject] : []),
+        ...(options.previewText ? ['--preview-text', options.previewText] : []),
+        ...(options.templatePath ? ['--template-path', options.templatePath] : []),
+        ...(options.write ? ['--write'] : []),
+      ];
+      const code = await emailImportMain(argv, config);
+      if (code) process.exitCode = code;
+    });
+
   emails
     .command('inventory')
     .description('read-only email inventory + spike snapshots to .sync-state/email-spike/')

@@ -202,7 +202,12 @@ as a slot scaffold only, not as the live `templatePath`.
 **In scope:** pull; manifest-scoped DnD push; `@asset:` rehost; Beefree Simple
 Schema import (`hcms emails import beefree`) — maps `title`, `divider`, `button`,
 and styled `paragraph` modules to DnD widget HTML plus `styleSettings` from
-`template.settings`; reusable blocks; semantic round-trip fingerprint.
+`template.settings`; Beefree **HTML+images zip** import (`hcms emails import
+beefree-zip`) — preserves full visual layout (hero backgrounds, galleries, row
+styles) in a single full-bleed `hs_email_body` widget, copies `images/*` to
+`content/assets/beefree/<key>/`, and pins `templatePath` to
+`@hubspot/email/dnd/Start_from_scratch.html` for `DRAG_AND_DROP` editor mode;
+reusable blocks; semantic round-trip fingerprint.
 
 **Out of scope:** workflow enrollment recreation; `subscriptionDetails` ID
 fidelity; `to` / segment targeting; published-sent campaign replay; byte-identical
@@ -219,7 +224,30 @@ hcms push dev --only assets,email-templates,emails
 hcms push dev --only emails --allow-template-fallback   # dev without Marketing Pro shells
 HCMS_ALLOW_PROD_PUSH=1 hcms push prod --only emails   # prod (scoped manifest recommended)
 hcms emails import beefree schema.json --key <campaign> --template <shell-key> --write
+hcms emails import beefree-zip export.zip --key <campaign> --name "Display name" --write
 ```
+
+### Beefree zip import (HTML export)
+
+Beefree's **Download HTML** bundle (`index.html` + `images/`) is the path for
+catalog templates with hero images, row backgrounds, and galleries. The importer:
+
+1. Unpacks the zip (requires `unzip` on PATH) or reads an extracted directory
+2. Copies images → `content/assets/beefree/<key>/`
+3. Rewrites `images/foo.png` → `@asset:beefree/<key>/foo.png` in widget HTML
+4. Composes widget HTML from `<head>` styles + `nl-container` body (keeps
+   responsive `@media` rules)
+5. Writes provenance under `imports/beefree/<key>/` (`source.index.html`,
+   `import.meta.json`, and `source.zip` when imported from zip)
+6. Emits `content/emails/campaigns/<key>.json` with `emailTemplateMode:
+   DRAG_AND_DROP` and `templatePath: @hubspot/email/dnd/Start_from_scratch.html`
+
+**Do not** point zip-imported campaigns at committed `email-templates/*.html`
+shells — HubSpot forces `DESIGN_MANAGER` on prod and the editor loses
+backgrounds/fonts. Visual design lives in widget HTML + `styleSettings`.
+
+Re-import after editing in Beefree: re-export zip, run the same command with
+`--write` (overwrites campaign + assets + provenance).
 
 ## Verification
 

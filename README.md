@@ -42,7 +42,8 @@ hcms corpus
 hcms manifest validate
 hcms emails inventory prod   # read-only spike → .sync-state/email-spike/
 hcms push dev --only assets,email-templates,emails   # DnD campaign push
-hcms email-import beefree …   # Beefree → campaign + shell scaffold
+hcms emails import beefree …       # Beefree Simple Schema → campaign + shell scaffold
+hcms emails import beefree-zip …   # Beefree HTML+images zip → DnD campaign + assets
 ```
 
 Marketing email **pull** and **manifest-scoped DnD push** are implemented.

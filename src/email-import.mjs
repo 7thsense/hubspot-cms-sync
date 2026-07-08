@@ -2,12 +2,19 @@
 // sync/email-import.mjs — import external email designs into canonical git layout.
 //
 //   hcms emails import beefree <schema.json> --key <campaign> --template <shell-key> [--write]
+//   hcms emails import beefree-zip <export.zip|dir> --key <campaign> [--write]
 
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
 import { stableStringify } from './lib/canonical.mjs';
 import { projectBeefreeImport } from './lib/beefree-import.mjs';
+import {
+  projectBeefreeZipImport,
+  readBeefreeExport,
+  stageBeefreeAssets,
+  writeBeefreeZipProvenance,
+} from './lib/beefree-zip-import.mjs';
 
 export function importBeefreeFromFile(schemaPath, opts = {}) {
   const {
@@ -47,8 +54,136 @@ export function importBeefreeFromFile(schemaPath, opts = {}) {
   };
 }
 
+export function importBeefreeZipFromFile(exportPath, opts = {}) {
+  const {
+    key,
+    root = process.cwd(),
+    write = false,
+    name,
+    subject,
+    previewText,
+    templatePath,
+  } = opts;
+
+  if (!key) throw new Error('import beefree-zip: --key is required');
+
+  const source = readBeefreeExport(exportPath);
+  const projected = projectBeefreeZipImport({
+    html: source.html,
+    key,
+    name,
+    subject,
+    previewText,
+    templatePath,
+  });
+
+  const contentDir = join(root, 'content');
+  const campaignPath = join(contentDir, 'emails', 'campaigns', `${key}.json`);
+  const importDir = join(root, 'imports', 'beefree', key);
+  const assets = stageBeefreeAssets(
+    source.imagesDir,
+    contentDir,
+    projected.assetPrefix,
+    write,
+  );
+
+  const notes = [
+    ...projected.notes,
+    `staged ${assets.length} image(s) under content/assets/${projected.assetPrefix}/`,
+  ];
+
+  const provenance = writeBeefreeZipProvenance({
+    importDir,
+    key,
+    exportPath,
+    html: source.html,
+    assets,
+    sourceType: source.sourceType,
+    write,
+  });
+
+  if (write) {
+    mkdirSync(dirname(campaignPath), { recursive: true });
+    writeFileSync(campaignPath, stableStringify(projected.campaign));
+  }
+
+  return {
+    campaignPath,
+    importDir,
+    importMetaPath: provenance.metaPath,
+    templatePath: projected.campaign.templatePath,
+    assetCount: assets.length,
+    assets: assets.map((a) => a.token),
+    notes,
+  };
+}
+
+function parseCommonImportArgs(args, config) {
+  const write = args.includes('--write');
+  const keyIdx = args.indexOf('--key');
+  const nameIdx = args.indexOf('--name');
+  const subjectIdx = args.indexOf('--subject');
+  const previewIdx = args.indexOf('--preview-text');
+  const templatePathIdx = args.indexOf('--template-path');
+  const key = keyIdx >= 0 ? args[keyIdx + 1] : null;
+  const name = nameIdx >= 0 ? args[nameIdx + 1] : undefined;
+  const subject = subjectIdx >= 0 ? args[subjectIdx + 1] : undefined;
+  const previewText = previewIdx >= 0 ? args[previewIdx + 1] : undefined;
+  const templatePath = templatePathIdx >= 0 ? args[templatePathIdx + 1] : undefined;
+  const skipIndices = new Set(
+    [keyIdx, nameIdx, subjectIdx, previewIdx, templatePathIdx]
+      .filter((i) => i >= 0)
+      .flatMap((i) => [i, i + 1]),
+  );
+  const positional = args.filter((a, i) => !a.startsWith('--') && !skipIndices.has(i));
+  return {
+    write,
+    key,
+    name,
+    subject,
+    previewText,
+    templatePath,
+    positional,
+    root: config?.root ?? process.cwd(),
+  };
+}
+
 export async function main(argv = process.argv.slice(2), config = {}) {
   const args = [...argv];
+  const sub = args[0];
+
+  if (sub === 'beefree-zip') {
+    const rest = args.slice(1);
+    const {
+      write, key, name, subject, previewText, templatePath, positional, root,
+    } = parseCommonImportArgs(rest, config);
+    const exportPath = positional[0];
+    if (!exportPath || !existsSync(exportPath)) {
+      console.error(
+        'usage: hcms emails import beefree-zip <export.zip|dir> --key <campaign> '
+        + '[--name <name>] [--subject <subject>] [--preview-text <text>] [--write]\n'
+        + '  Zip exports need `unzip` on PATH. Directories must contain index.html + images/.',
+      );
+      return 2;
+    }
+    const result = importBeefreeZipFromFile(exportPath, {
+      key,
+      root,
+      write,
+      name,
+      subject,
+      previewText,
+      templatePath,
+    });
+    console.log(`campaign: ${result.campaignPath}`);
+    console.log(`provenance: ${result.importDir}`);
+    console.log(`templatePath: ${result.templatePath}`);
+    console.log(`assets: ${result.assetCount}`);
+    for (const n of result.notes) console.log(`  note: ${n}`);
+    if (!write) console.log('(dry-run — pass --write to create files)');
+    return 0;
+  }
+
   const write = args.includes('--write');
   const keyIdx = args.indexOf('--key');
   const tplIdx = args.indexOf('--template');
