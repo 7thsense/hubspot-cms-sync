@@ -1,6 +1,10 @@
 // sync/lib/beefree-import.mjs — Beefree Simple Schema → canonical email + HubL shell (pure).
 
-import { countBodyModules, dndModuleSection } from './email-dnd.mjs';
+import {
+  countBodyModules,
+  dndModuleSection,
+  DEFAULT_EMAIL_STYLE_SETTINGS,
+} from './email-dnd.mjs';
 
 /**
  * Escape text for HTML attribute or body insertion.
@@ -14,15 +18,122 @@ function escHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+function modStyle(mod, key, fallback = '') {
+  if (!mod || typeof mod !== 'object') return fallback;
+  const kebab = key.replace(/([A-Z])/g, '-$1').toLowerCase();
+  return mod[key] ?? mod[kebab] ?? fallback;
+}
+
+/**
+ * Map Beefree template.settings → HubSpot DnD styleSettings.
+ * @param {object} settings
+ * @returns {object}
+ */
+export function beefreeSettingsToStyleSettings(settings = {}) {
+  const bg = settings.backgroundColor ?? settings['background-color'] ?? '#f5f8fa';
+  const body = settings.contentAreaBackgroundColor ?? '#ffffff';
+  const link = settings.linkColor ?? '#00a4bd';
+  return {
+    ...DEFAULT_EMAIL_STYLE_SETTINGS,
+    backgroundColor: bg,
+    bodyColor: body,
+    linksFont: link ? { color: link } : DEFAULT_EMAIL_STYLE_SETTINGS.linksFont,
+  };
+}
+
+/**
+ * Convert a Beefree simple title module to HTML fragment.
+ * @param {object} mod
+ * @returns {string}
+ */
+export function titleModuleToHtml(mod) {
+  const text = String(mod?.text ?? '').trim();
+  if (!text) return '';
+  if (/<[a-z]/i.test(text)) return text;
+  const size = modStyle(mod, 'size', 24);
+  const color = modStyle(mod, 'color', '#33475b');
+  const align = modStyle(mod, 'align', 'left');
+  const bold = mod.bold !== false;
+  const pt = modStyle(mod, 'padding-top', 12);
+  const pb = modStyle(mod, 'padding-bottom', 8);
+  const lh = modStyle(mod, 'line-height', 1.2);
+  const inner = bold ? `<strong>${escHtml(text)}</strong>` : escHtml(text);
+  return (
+    `<p style="font-size:${size}px;line-height:${lh};color:${color};text-align:${align};` +
+    `padding-top:${pt}px;padding-bottom:${pb}px;margin:0;font-family:Arial,sans-serif;">${inner}</p>`
+  );
+}
+
+/**
+ * Convert a Beefree simple divider module to HTML fragment.
+ * @param {object} mod
+ * @returns {string}
+ */
+export function dividerModuleToHtml(mod) {
+  const color = modStyle(mod, 'color', '#cbd6e2');
+  const width = modStyle(mod, 'width', 100);
+  return (
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:12px 0;">' +
+    `<tr><td align="center"><hr style="border:0;border-top:1px solid ${color};` +
+    `width:${width}%;margin:0;"></td></tr></table>`
+  );
+}
+
+/**
+ * Convert a Beefree simple button module to HTML fragment.
+ * @param {object} mod
+ * @returns {string}
+ */
+export function buttonModuleToHtml(mod) {
+  const text = String(mod?.text ?? 'Learn more').trim();
+  const href = String(mod?.href ?? '#');
+  const color = modStyle(mod, 'color', '#ffffff');
+  const bg = mod['background-color'] ?? mod.backgroundColor ?? '#00a4bd';
+  return (
+    '<table role="presentation" cellpadding="0" cellspacing="0" style="margin:16px 0;" width="100%">' +
+    '<tr><td align="center">' +
+    `<a href="${escHtml(href)}" style="background-color:${bg};color:${color};` +
+    'font-family:Arial,sans-serif;font-size:16px;font-weight:bold;text-decoration:none;' +
+    `padding:12px 24px;border-radius:4px;display:inline-block;">${escHtml(text)}</a>` +
+    '</td></tr></table>'
+  );
+}
+
 /**
  * Convert a Beefree simple paragraph module to HTML fragment.
  * @param {object} mod
+ * @returns {string}
  */
 export function paragraphModuleToHtml(mod) {
   const text = mod?.text ?? mod?.html ?? '';
   if (typeof text !== 'string' || !text.trim()) return '';
-  if (text.includes('<')) return text;
-  return `<p style="line-height: 1.5;">${escHtml(text)}</p>`;
+  if (/<[a-z]/i.test(text)) return text;
+  const size = modStyle(mod, 'size', 15);
+  const color = modStyle(mod, 'color', '#444444');
+  const align = modStyle(mod, 'align', 'left');
+  const lh = modStyle(mod, 'line-height', 1.5);
+  let inner = escHtml(text);
+  if (mod.bold) inner = `<strong>${inner}</strong>`;
+  return (
+    `<p style="font-size:${size}px;line-height:${lh};color:${color};text-align:${align};` +
+    `margin:0 0 10px;font-family:Arial,sans-serif;">${inner}</p>`
+  );
+}
+
+/**
+ * Convert any supported Beefree simple module to an HTML fragment.
+ * @param {object} mod
+ * @returns {string}
+ */
+export function beefreeModuleToHtml(mod) {
+  const type = String(mod?.type ?? mod?.descriptor ?? 'paragraph').toLowerCase();
+  if (type === 'title' || type === 'heading') return titleModuleToHtml(mod);
+  if (type === 'divider' || type === 'separator') return dividerModuleToHtml(mod);
+  if (type === 'button' || type === 'cta') return buttonModuleToHtml(mod);
+  if (type === 'paragraph' || type === 'text' || type === 'html') {
+    return paragraphModuleToHtml(mod);
+  }
+  return '';
 }
 
 /**
@@ -43,20 +154,6 @@ export function beefreeSimpleToWidgets(simple) {
       const modules = Array.isArray(col?.modules) ? col.modules : [];
       for (const mod of modules) {
         const type = String(mod?.type ?? mod?.descriptor ?? 'paragraph').toLowerCase();
-        if (type === 'paragraph' || type === 'text' || type === 'html') {
-          const html = paragraphModuleToHtml(mod);
-          if (!html) continue;
-          const name = bodyIndex === 0 ? 'hs_email_body' : `hs_email_body_${bodyIndex + 1}`;
-          widgets[name] = {
-            type: 'module',
-            name,
-            label: name,
-            body: { html },
-            smart_type: null,
-          };
-          bodyIndex += 1;
-          continue;
-        }
         if (type === 'image') {
           const src = mod?.src ?? mod?.url ?? '';
           const name = `image_${Object.keys(widgets).length + 1}`;
@@ -73,7 +170,20 @@ export function beefreeSimpleToWidgets(simple) {
           notes.push(`image module "${name}" — hosted URL tokenized if external`);
           continue;
         }
-        notes.push(`skipped Beefree module type "${type}"`);
+        const html = beefreeModuleToHtml(mod);
+        if (!html) {
+          notes.push(`skipped Beefree module type "${type}"`);
+          continue;
+        }
+        const name = bodyIndex === 0 ? 'hs_email_body' : `hs_email_body_${bodyIndex + 1}`;
+        widgets[name] = {
+          type: 'module',
+          name,
+          label: name,
+          body: { html },
+          smart_type: null,
+        };
+        bodyIndex += 1;
       }
     }
   }
@@ -123,7 +233,7 @@ export function assertEmailTemplateAnnotated(html, relPath) {
  * @param {object} opts
  * @param {string} opts.key — filename stem (email-templates/<key>.html)
  * @param {string} [opts.label] — Design Manager label (defaults to key)
- * @param {string} [opts.dndAreaName='main'] — dnd_area id (HubSpot allows one per email)
+ * @param {string} [opts.dndAreaName='main'] — dnd_area id (HubSpot allows one per page)
  * @param {number} [opts.bodyModuleCount=1] — email_body module rows in the shell
  * @param {boolean} [opts.includeLogo=true]
  * @param {boolean} [opts.includeFooter=true]
@@ -186,8 +296,10 @@ export function projectBeefreeImport(simple, {
   name,
   subject,
 } = {}) {
+  const template = simple?.template ?? simple;
   const { widgets, metadata, notes } = beefreeSimpleToWidgets(simple);
   const templatePath = `${themeName}/email-templates/${templateKey}.html`;
+  const styleSettings = beefreeSettingsToStyleSettings(template?.settings ?? {});
   const campaign = {
     key,
     name: name ?? metadata.title ?? key,
@@ -201,6 +313,7 @@ export function projectBeefreeImport(simple, {
     blocks: [],
     content: {
       templatePath,
+      styleSettings,
       widgets,
     },
     webversion: { enabled: false },

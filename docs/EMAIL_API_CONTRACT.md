@@ -196,8 +196,10 @@ Theme shells under `email-templates/` work for slot structure when uploaded firs
 
 ## Scope
 
-**In scope:** pull; manifest-scoped DnD push; `@asset:` rehost; Beefree import
-(`hcms emails import beefree`); reusable blocks; semantic round-trip fingerprint.
+**In scope:** pull; manifest-scoped DnD push; `@asset:` rehost; Beefree Simple
+Schema import (`hcms emails import beefree`) — maps `title`, `divider`, `button`,
+and styled `paragraph` modules to DnD widget HTML plus `styleSettings` from
+`template.settings`; reusable blocks; semantic round-trip fingerprint.
 
 **Out of scope:** workflow enrollment recreation; `subscriptionDetails` ID
 fidelity; `to` / segment targeting; published-sent campaign replay; byte-identical

@@ -10,6 +10,9 @@ import {
   emailTemplateAnnotation,
   projectBeefreeImport,
   paragraphModuleToHtml,
+  titleModuleToHtml,
+  dividerModuleToHtml,
+  beefreeSettingsToStyleSettings,
 } from '../../src/lib/beefree-import.mjs';
 import { importBeefreeFromFile } from '../../src/email-import.mjs';
 
@@ -17,12 +20,28 @@ function loadFixture(name) {
   return JSON.parse(readFileSync(join(import.meta.dirname, '..', 'fixtures', 'beefree', name), 'utf8'));
 }
 
-test('paragraphModuleToHtml wraps plain text with default line-height', () => {
-  assert.equal(
-    paragraphModuleToHtml({ text: 'Hello' }),
-    '<p style="line-height: 1.5;">Hello</p>',
-  );
+test('paragraphModuleToHtml applies Beefree paragraph styles', () => {
+  const out = paragraphModuleToHtml({ text: 'Hello' });
+  assert.match(out, /line-height:\s*1\.5/);
+  assert.match(out, /font-family:Arial,sans-serif/);
   assert.equal(paragraphModuleToHtml({ html: '<p>Hi</p>' }), '<p>Hi</p>');
+});
+
+test('titleModuleToHtml and dividerModuleToHtml render styled sections', () => {
+  assert.match(titleModuleToHtml({ text: 'Article of the month', size: 24 }), /Article of the month/);
+  assert.match(titleModuleToHtml({ text: 'Article of the month', size: 24 }), /font-size:24px/);
+  assert.match(dividerModuleToHtml({ color: '#00a4bd', width: 40 }), /border-top:1px solid #00a4bd/);
+});
+
+test('beefreeSettingsToStyleSettings maps template settings', () => {
+  const s = beefreeSettingsToStyleSettings({
+    backgroundColor: '#f5f8fa',
+    contentAreaBackgroundColor: '#ffffff',
+    linkColor: '#00a4bd',
+  });
+  assert.equal(s.backgroundColor, '#f5f8fa');
+  assert.equal(s.bodyColor, '#ffffff');
+  assert.equal(s.linksFont.color, '#00a4bd');
 });
 
 test('beefreeSimpleToWidgets maps rows to hs_email_body widgets', () => {
@@ -71,6 +90,7 @@ test('projectBeefreeImport builds campaign + templatePath', () => {
   );
   assert.match(shell, /dnd_area/);
   assert.ok(campaign.content.widgets.hs_email_body);
+  assert.equal(campaign.content.styleSettings.backgroundColor, '#f5f8fa');
 });
 
 test('importBeefreeFromFile dry-run returns paths without writing', () => {
