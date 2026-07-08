@@ -46,11 +46,10 @@ hcms email-import beefree …   # Beefree → campaign + shell scaffold
 ```
 
 Marketing email **pull** and **manifest-scoped DnD push** are implemented.
-Pull only manifest-listed `emails[]` unless `HCMS_EMAIL_PULL_ALL=1`. Push
-creates/updates drafts for manifest entries with `desiredState` in
-`draft` / `draftCopy` / `workflow`. See
-[`docs/EMAIL_API_CONTRACT.md`](docs/EMAIL_API_CONTRACT.md) for the DnD editor
-requirements (`emailTemplateMode`, `styleSettings`, `flexAreas`, `module_id`).
+See [`docs/EMAIL_API_CONTRACT.md`](docs/EMAIL_API_CONTRACT.md) for layout,
+manifest allowlist, push gates, operator commands, and DnD editor requirements
+(`emailTemplateMode`, `styleSettings`, `flexAreas`, `module_id`). Repository
+tree: [`docs/CONTENT_LAYOUT.md`](docs/CONTENT_LAYOUT.md#marketing-emails).
 
 `hcms redirects` is dry-run by default. Pass `--apply` to create or update
 HubSpot URL redirects from the configured `redirectsFile`, or pass `--file` to

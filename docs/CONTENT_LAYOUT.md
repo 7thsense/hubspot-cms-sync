@@ -20,10 +20,20 @@ my-site/
 |   |   `-- properties.json
 |   |-- assets/
 |   |   `-- hero.svg
+|   |-- emails/
+|   |   |-- campaigns/
+|   |   |   `-- inside-insights-2026-07.json
+|   |   |-- blocks/
+|   |   |   |-- logo.json
+|   |   |   `-- footer-can-spam.json
+|   |   |-- template-paths.json
+|   |   `-- subscriptions.json
 |   `-- blog/
 |       |-- container.json
 |       `-- posts/
 |           `-- blog__hello-world.json
+|-- email-templates/
+|   `-- monthly-roundup.html
 |-- templates/
 |   |-- home.html
 |   |-- page.html
@@ -61,14 +71,32 @@ redirect route.
 | Contact properties | `content/forms/properties.json` | CRM Properties API |
 | File assets | `content/assets/**` and `content/blog/assets/**` | File Manager API |
 | Blog container and posts | `content/blog/container.json`, `content/blog/posts/*.json` | Blog APIs |
-| Marketing emails (pull v1) | `content/emails/<key>.json` | Marketing Email API (`/marketing/v3/emails`) — push not yet implemented |
+| Marketing emails | `content/emails/campaigns/<key>.json` (or `content/emails/<key>.json`) | Marketing Email API (`/marketing/v3/emails`) |
+| Email DnD shells | `email-templates/*.html` (manifest `emailTemplates[]`) | CMS Source Code API (theme path) |
 | URL redirects | `sync/redirects.csv` or configured `redirectsFile` | CMS URL Redirects API |
 
-Marketing email sidecars (not per-email records): `content/emails/template-paths.json`,
-`content/emails/subscriptions.json`, optional `content/emails/keys.json`.
+See [`EMAIL_API_CONTRACT.md`](EMAIL_API_CONTRACT.md) for manifest allowlist, DnD
+push requirements, and operator commands.
 
-Pull writes only manifest-listed `emails[]` keys unless `HCMS_EMAIL_PULL_ALL=1`.
-Inventory spike: `hcms emails inventory <account>` → `.sync-state/email-spike/`.
+## Marketing emails
+
+Campaigns live under `content/emails/campaigns/<key>.json`. Reusable widgets
+(logo, footer) are `content/emails/blocks/<name>.json` and referenced from
+manifest `emailBlocks` + per-email `blocks[]`.
+
+Sidecars (not per-campaign records):
+
+- `content/emails/template-paths.json` — verified `generated_layouts/*` remaps
+- `content/emails/subscriptions.json` — subscription name reference
+- `content/emails/keys.json` — optional name → key seed map
+
+Committed DnD shells are theme HTML under `email-templates/` and listed in
+manifest `emailTemplates[]`. Push uploads shells before campaigns
+(`--only email-templates` then `--only emails`).
+
+Pull writes manifest-listed `emails[]` keys unless `HCMS_EMAIL_PULL_ALL=1`.
+HubSpot ids map through gitignored `.sync-state/<portalId>.registry.json` →
+`emails[key]`.
 
 ## Deployment Surface
 
