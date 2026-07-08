@@ -1,7 +1,7 @@
 # hubspot-cms-sync
 
 Git-backed bidirectional HubSpot CMS sync for themes, site pages, page module
-content, blogs, forms, and assets.
+content, blogs, forms, marketing emails (pull v1), and assets.
 
 The package provides the `hcms` CLI. The long binary name
 `hubspot-cms-sync` is also installed, but examples use `hcms` for consistency.
@@ -39,7 +39,12 @@ hcms redirects dev --apply
 hcms republish dev --all --blog
 hcms corpus
 hcms manifest validate
+hcms emails inventory prod   # read-only spike → .sync-state/email-spike/
 ```
+
+Marketing email **pull** is implemented; **push** is not yet. Pull only manifest-
+listed `emails[]` unless `HCMS_EMAIL_PULL_ALL=1`. See
+[`docs/EMAIL_SYNC_PLAN.md`](docs/EMAIL_SYNC_PLAN.md).
 
 `hcms redirects` is dry-run by default. Pass `--apply` to create or update
 HubSpot URL redirects from the configured `redirectsFile`, or pass `--file` to

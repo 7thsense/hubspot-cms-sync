@@ -223,6 +223,39 @@ export function validateManifest(m) {
   if (!Array.isArray(m.uiGated)) {
     throw new Error('manifest: uiGated must be an array');
   }
+
+  if (m.emails != null) {
+    if (!Array.isArray(m.emails)) {
+      throw new Error('manifest: emails must be an array when present');
+    }
+    const emailKeys = new Set();
+    const VALID_EMAIL_STATES = new Set([
+      'ignore', 'pullOnly', 'draftCopy', 'unsupportedAutomated',
+    ]);
+    const VALID_CTA_POLICIES = new Set(['fail', 'linkify']);
+    for (const e of m.emails) {
+      if (!e || typeof e !== 'object') {
+        throw new Error('manifest: each email entry must be an object');
+      }
+      if (typeof e.key !== 'string' || !e.key) {
+        throw new Error('manifest: each email must have a non-empty key');
+      }
+      if (emailKeys.has(e.key)) {
+        throw new Error(`manifest: duplicate email key "${e.key}"`);
+      }
+      emailKeys.add(e.key);
+      if (e.desiredState != null && !VALID_EMAIL_STATES.has(e.desiredState)) {
+        throw new Error(
+          `manifest: email "${e.key}" has invalid desiredState "${e.desiredState}"`,
+        );
+      }
+      if (e.ctaPolicy != null && !VALID_CTA_POLICIES.has(e.ctaPolicy)) {
+        throw new Error(
+          `manifest: email "${e.key}" has invalid ctaPolicy "${e.ctaPolicy}"`,
+        );
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

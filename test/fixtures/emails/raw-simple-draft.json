@@ -1,0 +1,35 @@
+{
+  "id": "2780958283",
+  "name": "Sample - How to send your first email with HubSpot",
+  "subject": "Sample - How to send your first email with HubSpot",
+  "type": "BATCH_EMAIL",
+  "subcategory": "batch",
+  "state": "DRAFT",
+  "emailTemplateMode": "DESIGN_MANAGER",
+  "language": "en",
+  "from": { "fromName": "Seventh Sense", "replyTo": "hello@example.com" },
+  "subscriptionDetails": {
+    "subscriptionName": "Marketing Information",
+    "subscriptionId": "1244233",
+    "officeLocationId": "-1"
+  },
+  "to": {
+    "contactLists": { "include": [999], "exclude": [] }
+  },
+  "activeDomain": "www.example.com",
+  "businessUnitId": "0",
+  "previewKey": "HKofX3lz",
+  "content": {
+    "templatePath": "generated_layouts/2780957793.html",
+    "widgets": {
+      "hs_email_body": {
+        "type": "rich_text",
+        "body": {
+          "html": "<p>Hi {{ contact.firstname }}, welcome.</p>"
+        }
+      }
+    }
+  },
+  "webversion": { "enabled": false, "domain": "www.example.com", "slug": "-temporary-slug-abc" },
+  "jitterSendTime": true
+}

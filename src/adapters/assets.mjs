@@ -271,12 +271,12 @@ export function saveRehosted(portalId, map) {
 // likewise tokenized; reading every *.json under contentDir covers pages+blog json.
 // ───────────────────────────────────────────────────────────────────────────
 
-function walkJson(dir, acc) {
+function walkJson(dir, acc, { excludeNames = () => false } = {}) {
   if (!existsSync(dir)) return acc;
   for (const ent of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, ent.name);
-    if (ent.isDirectory()) walkJson(full, acc);
-    else if (ent.isFile() && ent.name.endsWith('.json')) acc.push(full);
+    if (ent.isDirectory()) walkJson(full, acc, { excludeNames });
+    else if (ent.isFile() && ent.name.endsWith('.json') && !excludeNames(ent.name)) acc.push(full);
   }
   return acc;
 }
@@ -310,15 +310,42 @@ export function collectBlogPostAssetPaths(contentDir) {
   return [...paths];
 }
 
+function manifestEmailKeys(contentDir, config) {
+  const path = config?.manifestFilePath
+    ?? join(dirname(contentDir), 'site.manifest.json');
+  if (!existsSync(path)) return null;
+  try {
+    const m = JSON.parse(readFileSync(path, 'utf8'));
+    const entries = Array.isArray(m.emails) ? m.emails : [];
+    const keys = entries
+      .filter((e) => e?.key && e.desiredState === 'draftCopy')
+      .map((e) => e.key);
+    return keys.length > 0 ? new Set(keys) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * collectReferencedAssetPaths(contentDir) -> string[] unique `<pathTail>`s
+ * collectReferencedAssetPaths(contentDir, opts?) -> string[] unique `<pathTail>`s
  * referenced anywhere in the canonical content tree (pages + blog json + blog .md).
  */
-export function collectReferencedAssetPaths(contentDir) {
+export function collectReferencedAssetPaths(contentDir, opts = {}) {
   const files = [];
-  walkJson(join(contentDir, 'pages'), files);
-  walkJson(join(contentDir, 'landing-pages'), files);
-  walkJson(join(contentDir, 'blog'), files);
+  const scope = opts.scope ?? 'all';
+  if (scope !== 'manifest-emails') {
+    walkJson(join(contentDir, 'pages'), files);
+    walkJson(join(contentDir, 'landing-pages'), files);
+    walkJson(join(contentDir, 'blog'), files);
+  }
+  const emailKeys = manifestEmailKeys(contentDir, opts.config);
+  if (emailKeys) {
+    const emailsDir = join(contentDir, 'emails');
+    for (const key of emailKeys) {
+      const f = join(emailsDir, `${key}.json`);
+      if (existsSync(f)) files.push(f);
+    }
+  }
   const paths = new Set();
   for (const f of files) {
     // skip our own state/manifest files if they ever live under content/
@@ -333,7 +360,9 @@ export function collectReferencedAssetPaths(contentDir) {
   // Blog posts are .md (frontmatter+body), invisible to the .json walk above —
   // scan them too so a post cover `featuredImage: "@asset:blog-covers/x.png"` (and
   // any body token) is collected/uploaded/registered like a page asset.
-  for (const p of collectBlogPostAssetPaths(contentDir)) paths.add(p);
+  if (scope !== 'manifest-emails') {
+    for (const p of collectBlogPostAssetPaths(contentDir)) paths.add(p);
+  }
   return [...paths];
 }
 
@@ -485,13 +514,20 @@ export async function pull(acct, { contentDir, registry }) {
 // push(acct, { contentDir, registry }) -> { pushed, notes }
 // ───────────────────────────────────────────────────────────────────────────
 
-export async function push(acct, { contentDir, registry }) {
+export async function push(acct, ctx) {
+  const { contentDir, registry, config } = ctx;
   const notes = [];
   const assetsDir = join(contentDir, 'assets');
   // Union of referenced paths and bytes-on-disk: upload anything we have a file
   // for, so content/blog/theme can resolve every @asset they reference.
-  const referenced = new Set(collectReferencedAssetPaths(contentDir));
-  const onDisk = new Set(listAssetFiles(assetsDir));
+  const assetScanScope = ctx.assetScanScope ?? 'all';
+  const referenced = new Set(collectReferencedAssetPaths(contentDir, {
+    config,
+    scope: assetScanScope,
+  }));
+  const onDisk = assetScanScope === 'manifest-emails'
+    ? new Set()
+    : new Set(listAssetFiles(assetsDir));
   const paths = [...new Set([...referenced, ...onDisk])];
 
   // The rehosted cache (.sync-state/<portal>.rehosted.json) is the per-account

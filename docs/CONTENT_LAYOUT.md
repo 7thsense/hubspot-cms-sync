@@ -61,7 +61,14 @@ redirect route.
 | Contact properties | `content/forms/properties.json` | CRM Properties API |
 | File assets | `content/assets/**` and `content/blog/assets/**` | File Manager API |
 | Blog container and posts | `content/blog/container.json`, `content/blog/posts/*.json` | Blog APIs |
+| Marketing emails (pull v1) | `content/emails/<key>.json` | Marketing Email API (`/marketing/v3/emails`) — push not yet implemented |
 | URL redirects | `sync/redirects.csv` or configured `redirectsFile` | CMS URL Redirects API |
+
+Marketing email sidecars (not per-email records): `content/emails/template-paths.json`,
+`content/emails/subscriptions.json`, optional `content/emails/keys.json`.
+
+Pull writes only manifest-listed `emails[]` keys unless `HCMS_EMAIL_PULL_ALL=1`.
+Inventory spike: `hcms emails inventory <account>` → `.sync-state/email-spike/`.
 
 ## Deployment Surface
 

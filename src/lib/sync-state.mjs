@@ -5,8 +5,8 @@
 //
 //   .sync-state/<portalId>.registry.json
 //
-// It holds the logical-key <-> per-account-id mapping (forms/ctas/menus GUIDs, asset
-// paths, the portal id) that PULL auto-registers and PUSH resolves. It is never
+// It holds the logical-key <-> per-account-id mapping (forms/ctas/menus/emails ids,
+// asset paths, the portal id) that PULL auto-registers and PUSH resolves. It is never
 // committed (see .gitignore `.sync-state/`), because it is account-specific identity,
 // not portable canonical content.
 //

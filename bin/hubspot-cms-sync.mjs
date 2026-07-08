@@ -14,6 +14,7 @@ import { buildStatic } from '../src/build-static.mjs';
 import { main as reconcileMain } from '../src/reconcile.mjs';
 import { main as deleteMain } from '../src/deletions.mjs';
 import { main as migrateMain, BACKENDS } from '../src/migrate.mjs';
+import { main as emailInventoryMain } from '../src/email-inventory.mjs';
 import { resolve as resolvePath } from 'node:path';
 
 function runNodeScript(script, args, { cwd }) {
@@ -91,14 +92,23 @@ async function main(argv = process.argv) {
     .option('--publish', 'publish/schedule pushed content')
     .option('--force', 'overwrite items that drifted on HubSpot (UI edits) since the last sync')
     .option('--dry-run', 'run local push preflight only')
+    .option('--only <adapters>', 'comma-separated adapter subset (deps included), e.g. emails')
     .action(async (account, options) => {
       const config = await withConfig(program.opts());
+      const only = options.only
+        ? options.only.split(',').map((s) => s.trim()).filter(Boolean)
+        : null;
       if (options.dryRun) {
-        preflightRefs(config.contentDirPath);
+        preflightRefs(config.contentDirPath, { config });
         console.log(`dry-run push preflight passed for ${account}`);
         return;
       }
-      await push(account, { publish: !!options.publish, force: !!options.force, config });
+      await push(account, {
+        publish: !!options.publish,
+        force: !!options.force,
+        only,
+        config,
+      });
     });
 
   program
@@ -170,6 +180,23 @@ async function main(argv = process.argv) {
     .action(async (args) => {
       const config = await withConfig(program.opts());
       const code = await manifestMain(args, { config });
+      if (code) process.exitCode = code;
+    });
+
+  const emails = program.command('emails').description('marketing email utilities');
+
+  emails
+    .command('inventory')
+    .description('read-only email inventory + spike snapshots to .sync-state/email-spike/')
+    .argument('<account>')
+    .option('--include-archived', 'also fetch archived=true emails')
+    .option('--out <dir>', 'override output directory')
+    .action(async (account, options) => {
+      const config = await withConfig(program.opts());
+      const argv = [account];
+      if (options.includeArchived) argv.push('--include-archived');
+      if (options.out) argv.push('--out', options.out);
+      const code = await emailInventoryMain(argv, { config, root: config.root });
       if (code) process.exitCode = code;
     });
 

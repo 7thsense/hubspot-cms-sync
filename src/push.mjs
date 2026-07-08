@@ -27,6 +27,7 @@ import { account as realAccount } from './lib/hub.mjs';
 import { loadAdapters as realLoadAdapters, topoSort } from './lib/orchestrate.mjs';
 import { listLogicalTokens } from './lib/refs.mjs';
 import { resolveAssetBytesPath } from './adapters/assets.mjs';
+
 import {
   contentDir,
   loadAccountRegistry as realLoadAccountRegistry,
@@ -180,6 +181,53 @@ function knownFormKeys(fs, formsDir) {
   return keys;
 }
 
+function manifestEmailKeys(fs, config, { draftCopyOnly = true } = {}) {
+  const path = config?.manifestFilePath;
+  if (!path || !fs.existsSync(path)) return null;
+  try {
+    const m = JSON.parse(fs.readFileSync(path, 'utf8'));
+    const entries = Array.isArray(m.emails) ? m.emails : [];
+    const keys = entries
+      .filter((e) => e?.key && (!draftCopyOnly || e.desiredState === 'draftCopy'))
+      .map((e) => e.key);
+    return keys.length > 0 ? new Set(keys) : null;
+  } catch {
+    return null;
+  }
+}
+
+function pushScopeFromOnly(only) {
+  if (!only?.length) return 'all';
+  const pageConsumers = new Set(['pages', 'content', 'theme', 'blog', 'landing-pages', 'menus']);
+  if (only.includes('emails') && !only.some((a) => pageConsumers.has(a))) {
+    return 'manifest-emails';
+  }
+  return 'all';
+}
+
+function filterOrderForOnly(order, adapters, only) {
+  if (!only?.length) return order;
+  const include = new Set();
+  const addWithDeps = (name) => {
+    if (!(name in adapters)) {
+      throw new Error(`push --only: unknown adapter "${name}"`);
+    }
+    if (include.has(name)) return;
+    include.add(name);
+    for (const dep of adapters[name].dependsOn ?? []) addWithDeps(dep);
+  };
+  for (const name of only) addWithDeps(name);
+  return order.filter((name) => include.has(name));
+}
+
+function manifestEmailPreflightFiles(fs, emailsDir, config) {
+  const keys = manifestEmailKeys(fs, config);
+  if (!keys) return [];
+  return [...keys]
+    .map((key) => join(emailsDir, `${key}.json`))
+    .filter((f) => fs.existsSync(f));
+}
+
 /**
  * preflightRefs(contentDir, deps) — account-independent satisfiability check.
  * Scans the canonical content + theme ref-bearing files for @logical tokens and
@@ -188,11 +236,13 @@ function knownFormKeys(fs, formsDir) {
  * returns the list of scanned files on success. Pure aside from the injected fs.
  *
  * @param {string} contentDirPath absolute path to the canonical content/ tree
- * @param {{ fs?: typeof import('node:fs') }} [deps] fs seam for tests
+ * @param {{ fs?: typeof import('node:fs'), config?: object, scope?: 'all'|'manifest-emails' }} [deps]
  * @returns {{ scanned: string[] }}
  */
 export function preflightRefs(contentDirPath, deps = {}) {
   const fs = deps.fs || realFs;
+  const config = deps.config;
+  const scope = deps.scope ?? 'all';
   const root = dirname(contentDirPath); // <root>/content -> <root>
   const formsDir = join(contentDirPath, 'forms');
   const formKeys = knownFormKeys(fs, formsDir);
@@ -205,17 +255,21 @@ export function preflightRefs(contentDirPath, deps = {}) {
   const formsProps = join(formsDir, 'properties.json'); // form field producer source
   const excludeBlog = (p) => p === blogAssetsDir; // skip the whole blog byte subtree
   const excludeForms = (p) => p === formsGuids || p === formsProps;
+  const emailsDir = join(contentDirPath, 'emails');
 
   // Every file we must scan for tokens: RECURSIVELY across each ref-bearing canonical
-  // tree (pages, blog-minus-bytes, forms-minus-producers) plus the theme ref-bearers.
-  // The recursion means newly-added files (e.g. content/blog/authors.json, which the
-  // first full push never scanned) are covered automatically.
-  const files = [
-    ...listJsonFilesRecursive(fs, join(contentDirPath, 'pages')),
-    ...listJsonFilesRecursive(fs, join(contentDirPath, 'blog'), excludeBlog),
-    ...listJsonFilesRecursive(fs, formsDir, excludeForms),
-    ...themeRefFiles(fs, root),
-  ];
+  // tree (pages, blog-minus-bytes, forms-minus-producers) plus manifest-listed email
+  // files and the theme ref-bearers. Only manifest emails[] are push-managed — the
+  // prod inventory snapshot (300+ files) is not scanned here.
+  const files = scope === 'manifest-emails'
+    ? manifestEmailPreflightFiles(fs, emailsDir, config)
+    : [
+      ...listJsonFilesRecursive(fs, join(contentDirPath, 'pages')),
+      ...listJsonFilesRecursive(fs, join(contentDirPath, 'blog'), excludeBlog),
+      ...listJsonFilesRecursive(fs, formsDir, excludeForms),
+      ...manifestEmailPreflightFiles(fs, emailsDir, config),
+      ...themeRefFiles(fs, root),
+    ];
 
   // Collect EVERY unsatisfiable ref before throwing (operator fixes them in one pass).
   const offenders = []; // { file, token, reason }
@@ -270,7 +324,7 @@ export function preflightRefs(contentDirPath, deps = {}) {
 // hub/orchestrate/sync-state functions. Unit tests inject fakes so push() can be
 // exercised with no network and no real .sync-state writes.
 export async function push(name, options = {}, deps = {}) {
-  const { publish = false, force = false, config: optionConfig } = options;
+  const { publish = false, force = false, only = null, config: optionConfig } = options;
   const {
     account = realAccount,
     loadAdapters = realLoadAdapters,
@@ -295,12 +349,13 @@ export async function push(name, options = {}, deps = {}) {
   // canonical content has a backing producer source on disk. Runs BEFORE the adapter
   // loop (before ANY network write / registry load) so an unsatisfiable ref fails the
   // push CLOSED instead of half-updating the account on a mid-loop resolve() throw.
-  preflightRefs(contentDir(config), { fs });
+  const pushScope = pushScopeFromOnly(only);
+  preflightRefs(contentDir(config), { fs, config, scope: pushScope });
 
   const registry = loadAccountRegistry(acct.portalId, config);
 
   const adapters = await loadAdapters();
-  const order = topoSort(adapters);
+  const order = filterOrderForOnly(topoSort(adapters), adapters, only);
 
   // force: overwrite even drifted (UI-edited) remote items. snapshotRoot: where the
   // change snapshot (.sync-state/<portal>.sync.json) lives — the repo root.
@@ -309,11 +364,14 @@ export async function push(name, options = {}, deps = {}) {
     registry,
     publish,
     force,
+    only,
+    assetScanScope: pushScope === 'manifest-emails' ? 'manifest-emails' : 'all',
     snapshotRoot: config?.root || process.cwd(),
     config,
   };
 
   console.log(`push -> account "${acct.name}" (portal ${acct.portalId})${publish ? ' [--publish]' : ''}`);
+  if (only?.length) console.log(`only: ${only.join(', ')}`);
   console.log(`order: ${order.join(' -> ')}\n`);
 
   const summary = [];

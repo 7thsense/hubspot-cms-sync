@@ -136,8 +136,8 @@ test('persist leaves no .tmp- file and writes complete valid JSON', () => {
   const parsed = JSON.parse(readFileSync(final, 'utf8'));
   assert.equal(parsed.portalId, pid);
   assert.deepEqual(parsed.forms, { foo: 'bar' });
-  // saveRegistry shape: all four namespaces present.
-  for (const ns of ['forms', 'ctas', 'menus', 'assets']) {
+  // saveRegistry shape: all namespaces present.
+  for (const ns of ['forms', 'ctas', 'menus', 'assets', 'emails']) {
     assert.ok(Object.prototype.hasOwnProperty.call(parsed, ns), `has ${ns}`);
   }
 });
@@ -215,6 +215,7 @@ test('persisted bytes match stableStringify(saveRegistry-shape) exactly', () => 
     ctas: {},
     menus: {},
     assets: { 'b.png': '/hubfs/b.png', 'a.png': '/hubfs/a.png' },
+    emails: {},
   });
   assert.equal(onDisk, expected);
 });

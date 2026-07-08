@@ -113,13 +113,20 @@ const TOKEN_RE = /@(form|cta|menu):([A-Za-z0-9_-]+)|@asset:([^\s"'\\),]+)|@porta
 
 /** An empty registry skeleton. */
 export function emptyRegistry(portalId = null) {
-  return { portalId: portalId == null ? null : String(portalId), forms: {}, ctas: {}, menus: {}, assets: {} };
+  return {
+    portalId: portalId == null ? null : String(portalId),
+    forms: {},
+    ctas: {},
+    menus: {},
+    assets: {},
+    emails: {},
+  };
 }
 
 /** Normalize/clone a loaded registry object into the canonical shape. */
 export function loadRegistry(obj = {}) {
   const r = emptyRegistry(obj.portalId ?? null);
-  for (const ns of ['forms', 'ctas', 'menus', 'assets']) {
+  for (const ns of ['forms', 'ctas', 'menus', 'assets', 'emails']) {
     if (obj[ns] && typeof obj[ns] === 'object') Object.assign(r[ns], obj[ns]);
   }
   return r;
@@ -133,6 +140,7 @@ export function saveRegistry(reg) {
     ctas: { ...reg.ctas },
     menus: { ...reg.menus },
     assets: { ...reg.assets },
+    emails: { ...reg.emails },
   };
 }
 
