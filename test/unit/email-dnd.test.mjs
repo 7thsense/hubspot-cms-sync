@@ -6,6 +6,7 @@ import {
   buildDnDFlexAreas,
   countBodyModules,
   dndWidgetRank,
+  committedEmailTemplateExists,
   HUBSPOT_DND_FALLBACK_TEMPLATE,
 } from '../../src/lib/email-dnd.mjs';
 
@@ -38,6 +39,31 @@ test('normalizeDnDPushWidgets converts rich_text to module with order', () => {
   assert.equal(out.logo_image.type, 'module');
   assert.ok(out.logo_image.order < out.hs_email_body.order);
   assert.ok(out.hs_email_body.order < out.email_can_spam.order);
+});
+
+test('committedEmailTemplateExists probes Source Code API for theme shells', async () => {
+  const acct = { key: 'pat-test' };
+  const origFetch = globalThis.fetch;
+  let called = '';
+  globalThis.fetch = async (url, opts) => {
+    called = String(url);
+    assert.equal(opts.headers.Authorization, 'Bearer pat-test');
+    return { ok: true, status: 200 };
+  };
+  try {
+    const exists = await committedEmailTemplateExists(
+      acct,
+      'seventh-sense-theme/email-templates/monthly-roundup.html',
+    );
+    assert.equal(exists, true);
+    assert.match(called, /source-code\/published\/content\/seventh-sense-theme\/email-templates\/monthly-roundup\.html/);
+    assert.equal(
+      await committedEmailTemplateExists(acct, '@hubspot/email/dnd/Start_from_scratch.html'),
+      true,
+    );
+  } finally {
+    globalThis.fetch = origFetch;
+  }
 });
 
 test('buildDnDFlexAreas places each widget in its own section (excludes preview_text)', () => {

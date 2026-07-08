@@ -37,6 +37,12 @@ test('emailTemplateAnnotation declares templateType email', () => {
   assert.match(ann, /isAvailableForNewContent: true/);
 });
 
+test('emailTemplateAnnotation collapses newlines in label', () => {
+  const ann = emailTemplateAnnotation({ label: 'Line one\nLine two' });
+  assert.match(ann, /label: Line one Line two/);
+  assert.doesNotMatch(ann, /Line one\n/);
+});
+
 test('beefreeShellHtml emits annotated email DnD shell with module rows', () => {
   const html = beefreeShellHtml({ key: 'monthly-roundup', label: 'Monthly Roundup', bodyModuleCount: 2 });
   assert.match(html, /templateType: email/);

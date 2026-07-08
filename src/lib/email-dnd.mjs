@@ -1,6 +1,12 @@
 // sync/lib/email-dnd.mjs — DnD email widget normalization + shell layout (pure).
 
-import { isCommittedEmailTemplatePath } from './email-manifest.mjs';
+import { join } from 'node:path';
+
+import {
+  effectiveEmailTemplatePath,
+  isCommittedEmailTemplatePath,
+  pushEmailEntries,
+} from './email-manifest.mjs';
 
 export const HUBSPOT_DND_FALLBACK_TEMPLATE = '@hubspot/email/dnd/Start_from_scratch.html';
 
@@ -8,6 +14,7 @@ const LOGO_KEYS = new Set(['logo_image', 'logo', 'email_logo']);
 const FOOTER_KEYS = new Set(['email_can_spam', 'email_footer']);
 
 const HUB_API = 'https://api.hubapi.com';
+const DEFAULT_THEME_NAME = 'seventh-sense-theme';
 
 function deepClone(v) {
   return JSON.parse(JSON.stringify(v));
@@ -175,6 +182,55 @@ export function buildDnDFlexAreas(widgets = {}) {
       sections,
     },
   };
+}
+
+/**
+ * Strip "<themeName>/" from a manifest emailTemplates[].path value.
+ * @param {string} manifestPath e.g. seventh-sense-theme/email-templates/foo.html
+ * @param {string} [themeName]
+ * @returns {string} repo-relative path e.g. email-templates/foo.html
+ */
+export function localPathFromManifestTemplate(manifestPath, themeName = DEFAULT_THEME_NAME) {
+  const prefix = `${themeName}/`;
+  const p = String(manifestPath || '');
+  if (!p.startsWith(prefix)) {
+    throw new Error(
+      `email shell path must start with "${prefix}" (got "${p}")`,
+    );
+  }
+  return p.slice(prefix.length);
+}
+
+/**
+ * Unique committed shell manifest paths referenced by pushable emails and emailTemplates[].
+ * @param {object|null} manifest
+ * @param {string} [themeName]
+ * @returns {string[]}
+ */
+export function committedShellManifestPaths(manifest, themeName = DEFAULT_THEME_NAME) {
+  const paths = new Set();
+  const templates = Array.isArray(manifest?.emailTemplates) ? manifest.emailTemplates : [];
+  for (const t of templates) {
+    if (t?.path && isCommittedEmailTemplatePath(t.path)) paths.add(t.path);
+  }
+  for (const entry of pushEmailEntries(manifest)) {
+    const p = effectiveEmailTemplatePath(null, entry);
+    if (p && isCommittedEmailTemplatePath(p)) paths.add(p);
+  }
+  return [...paths];
+}
+
+/**
+ * Local repo paths (under root) for committed email shells required by the manifest.
+ * @param {object|null} manifest
+ * @param {string} root repo root
+ * @param {string} [themeName]
+ * @returns {string[]} absolute paths
+ */
+export function committedShellLocalPaths(manifest, root, themeName = DEFAULT_THEME_NAME) {
+  return committedShellManifestPaths(manifest, themeName).map(
+    (p) => join(root, localPathFromManifestTemplate(p, themeName)),
+  );
 }
 
 /**

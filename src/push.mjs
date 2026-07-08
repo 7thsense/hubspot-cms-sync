@@ -29,6 +29,10 @@ import { listLogicalTokens } from './lib/refs.mjs';
 import { resolveAssetBytesPath } from './adapters/assets.mjs';
 import { campaignFileCandidates, blockFilePath, knownBlockKeys } from './lib/email-blocks.mjs';
 import { pushEmailEntries, manifestEmailBlockKeys } from './lib/email-manifest.mjs';
+import {
+  committedShellManifestPaths,
+  localPathFromManifestTemplate,
+} from './lib/email-dnd.mjs';
 
 import {
   contentDir,
@@ -201,7 +205,7 @@ function manifestEmailKeys(fs, config, { pushableOnly = true } = {}) {
   return keys.length > 0 ? new Set(keys) : null;
 }
 
-function pushScopeFromOnly(only) {
+export function pushScopeFromOnly(only) {
   if (!only?.length) return 'all';
   const pageConsumers = new Set(['pages', 'content', 'theme', 'blog', 'landing-pages', 'menus']);
   const emailOnly = new Set(['emails', 'email-templates']);
@@ -307,6 +311,18 @@ export function preflightRefs(contentDirPath, deps = {}) {
           });
         }
       }
+      const themeName = config?.theme?.name || 'seventh-sense-theme';
+      for (const shellManifestPath of committedShellManifestPaths(manifest, themeName)) {
+        const rel = localPathFromManifestTemplate(shellManifestPath, themeName);
+        const shellAbs = join(root, rel);
+        if (!fs.existsSync(shellAbs)) {
+          offenders.push({
+            file: manifestPath,
+            token: `@email-shell:${rel}`,
+            reason: `no ${rel} on disk (committed DnD email template shell)`,
+          });
+        }
+      }
     }
   }
 
@@ -371,7 +387,13 @@ export function preflightRefs(contentDirPath, deps = {}) {
 // hub/orchestrate/sync-state functions. Unit tests inject fakes so push() can be
 // exercised with no network and no real .sync-state writes.
 export async function push(name, options = {}, deps = {}) {
-  const { publish = false, force = false, only = null, config: optionConfig } = options;
+  const {
+    publish = false,
+    force = false,
+    only = null,
+    allowTemplateFallback = false,
+    config: optionConfig,
+  } = options;
   const {
     account = realAccount,
     loadAdapters = realLoadAdapters,
@@ -412,6 +434,7 @@ export async function push(name, options = {}, deps = {}) {
     publish,
     force,
     only,
+    allowTemplateFallback,
     assetScanScope: pushScope === 'manifest-emails' ? 'manifest-emails' : 'all',
     snapshotRoot: config?.root || process.cwd(),
     config,

@@ -91,10 +91,14 @@ export function beefreeSimpleToWidgets(simple) {
  * @param {boolean} [opts.isAvailableForNewContent=true]
  * @returns {string}
  */
+function annotationLabel(label) {
+  return String(label || 'Email template').replace(/[\r\n]+/g, ' ').trim();
+}
+
 export function emailTemplateAnnotation({ label, isAvailableForNewContent = true } = {}) {
   const lines = [
     'templateType: email',
-    `label: ${label || 'Email template'}`,
+    `label: ${annotationLabel(label)}`,
     `isAvailableForNewContent: ${isAvailableForNewContent}`,
   ];
   return `<!--\n  ${lines.join('\n  ')}\n-->`;

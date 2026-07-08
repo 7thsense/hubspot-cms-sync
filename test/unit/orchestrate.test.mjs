@@ -221,6 +221,16 @@ test('loadAdapters throws on a duplicate adapter name', async () => {
   );
 });
 
+test('real adapter graph orders email-templates before emails', async () => {
+  const adapters = await loadAdapters();
+  const order = topoSort(adapters);
+  assert.ok(
+    order.indexOf('email-templates') < order.indexOf('emails'),
+    `email-templates must precede emails (got: ${order.join(' -> ')})`,
+  );
+  assert.deepEqual(adapters.emails.dependsOn, ['assets', 'email-templates']);
+});
+
 test('loadAdapters throws when a module has no name', async () => {
   await withFakeAdapters(
     { 'nameless.mjs': `export const dependsOn=[];` },

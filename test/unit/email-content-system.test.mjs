@@ -150,6 +150,7 @@ test('buildEmailPushPayload merges blocks and uses committed template shell', ()
     assert.ok(body.content.widgets.logo_image);
     assert.ok(body.content.widgets.email_can_spam);
     assert.ok(body.content.widgets.hs_email_body);
+    assert.ok(body.content.flexAreas?.main?.sections?.length >= 3);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -201,6 +202,22 @@ test('preflightRefs fails when referenced block file is missing', () => {
     assert.throws(
       () => preflightRefs(contentDir, { fs: nodeFs, config, scope: 'manifest-emails' }),
       (err) => err.message.includes('push preflight') && err.message.includes('@email-block:logo'),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('preflightRefs fails when committed email shell file is missing on disk', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'email-sys-'));
+  try {
+    const { contentDir } = scaffoldSite(dir);
+    const shellPath = join(dir, 'email-templates', 'monthly-roundup.html');
+    rmSync(shellPath, { force: true });
+    const config = { manifestFilePath: join(dir, 'site.manifest.json') };
+    assert.throws(
+      () => preflightRefs(contentDir, { fs: nodeFs, config, scope: 'manifest-emails' }),
+      (err) => err.message.includes('push preflight') && err.message.includes('@email-shell:'),
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

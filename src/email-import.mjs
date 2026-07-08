@@ -71,7 +71,11 @@ export async function main(argv = process.argv.slice(2), config = {}) {
   });
   const schemaPath = positional[0];
   if (!schemaPath || !existsSync(schemaPath)) {
-    console.error('usage: hcms emails import beefree <schema.json> --key <campaign> [--template <shell>] [--write]');
+    console.error(
+      'usage: hcms emails import beefree <schema.json> --key <campaign> '
+      + '[--template <shell>] [--write]\n'
+      + '  Unsupported Beefree module types are skipped (see import notes).',
+    );
     return 2;
   }
   const result = importBeefreeFromFile(schemaPath, {

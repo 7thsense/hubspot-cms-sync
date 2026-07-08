@@ -5,7 +5,7 @@ import { Command } from 'commander';
 
 import { loadConfig } from '../src/config.mjs';
 import { pull } from '../src/pull.mjs';
-import { push, preflightRefs } from '../src/push.mjs';
+import { push, preflightRefs, pushScopeFromOnly } from '../src/push.mjs';
 import { main as preflightMain } from '../src/preflight.mjs';
 import { main as republishMain } from '../src/republish.mjs';
 import { main as manifestMain } from '../src/manifest.mjs';
@@ -94,20 +94,26 @@ async function main(argv = process.argv) {
     .option('--force', 'overwrite items that drifted on HubSpot (UI edits) since the last sync')
     .option('--dry-run', 'run local push preflight only')
     .option('--only <adapters>', 'comma-separated adapter subset (deps included), e.g. emails,email-templates')
+    .option(
+      '--allow-template-fallback',
+      'when a committed DnD shell is missing on the portal, use HubSpot Start_from_scratch instead of failing',
+    )
     .action(async (account, options) => {
       const config = await withConfig(program.opts());
       const only = options.only
         ? options.only.split(',').map((s) => s.trim()).filter(Boolean)
         : null;
       if (options.dryRun) {
-        preflightRefs(config.contentDirPath, { config });
-        console.log(`dry-run push preflight passed for ${account}`);
+        const scope = pushScopeFromOnly(only);
+        preflightRefs(config.contentDirPath, { config, scope });
+        console.log(`dry-run push preflight passed for ${account} (scope: ${scope})`);
         return;
       }
       await push(account, {
         publish: !!options.publish,
         force: !!options.force,
         only,
+        allowTemplateFallback: !!options.allowTemplateFallback,
         config,
       });
     });

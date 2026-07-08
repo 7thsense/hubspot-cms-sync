@@ -32,7 +32,7 @@ function mockHub(emails) {
 
 test('adapter exports expected contract', () => {
   assert.equal(name, 'emails');
-  assert.deepEqual(dependsOn, ['assets']);
+  assert.deepEqual(dependsOn, ['assets', 'email-templates']);
 });
 
 test('pull writes canonical files and persists registry.emails', () => {
@@ -328,10 +328,77 @@ test('push falls back to Start_from_scratch when committed shell missing on port
       }),
     );
 
-    const r = await push(ACCT, { contentDir, registry, config, hub });
+    const r = await push(ACCT, {
+      contentDir,
+      registry,
+      config,
+      hub,
+      allowTemplateFallback: true,
+    });
     assert.equal(r.pushed, 1);
     assert.match(created[0].content.templatePath, /Start_from_scratch/);
     assert.ok(r.notes.some((n) => n.includes('missing on portal')));
+  } finally {
+    globalThis.fetch = origFetch;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('push fails closed when committed shell missing on portal without allowTemplateFallback', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'emails-push-failclosed-'));
+  const contentDir = join(dir, 'content');
+  const emailsDir = join(contentDir, 'emails', 'campaigns');
+  const config = {
+    root: dir,
+    contentDirPath: contentDir,
+    manifestFilePath: join(dir, 'site.manifest.json'),
+  };
+  const registry = emptyRegistry('246389711');
+  const hub = async () => ({ ok: true, status: 200, json: { results: [] } });
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('source-code/published/content/')) {
+      return { ok: false, status: 404 };
+    }
+    return origFetch(url);
+  };
+
+  try {
+    mkdirSync(emailsDir, { recursive: true });
+    writeFileSync(
+      config.manifestFilePath,
+      JSON.stringify({
+        theme: { name: 'seventh-sense-theme' },
+        pages: [],
+        blog: { slug: 'b', itemTemplate: 'a', listingTemplate: 'b' },
+        forms: [],
+        uiGated: [],
+        emails: [{
+          key: 'fallback-email',
+          desiredState: 'draft',
+          templatePath: 'seventh-sense-theme/email-templates/monthly-roundup.html',
+        }],
+      }),
+    );
+    writeFileSync(
+      join(emailsDir, 'fallback-email.json'),
+      stableStringify({
+        key: 'fallback-email',
+        name: 'Fallback',
+        subject: 'Subj',
+        emailTemplateMode: 'DRAG_AND_DROP',
+        content: {
+          templatePath: 'seventh-sense-theme/email-templates/monthly-roundup.html',
+          widgets: { hs_email_body: { type: 'rich_text', body: { html: '<p>x</p>' } } },
+        },
+        from: { fromName: '', replyTo: '' },
+      }),
+    );
+
+    await assert.rejects(
+      () => push(ACCT, { contentDir, registry, config, hub }),
+      /allow-template-fallback/,
+    );
   } finally {
     globalThis.fetch = origFetch;
     rmSync(dir, { recursive: true, force: true });

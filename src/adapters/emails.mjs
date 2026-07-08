@@ -6,7 +6,6 @@
 // BATCH_EMAIL / DRAFT content clones on the target account.
 
 import * as nodeFs from 'node:fs';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { hub as defaultHub } from '../lib/hub.mjs';
@@ -28,8 +27,9 @@ import {
 
 export const name = 'emails';
 
-// Resolve @asset: refs after the assets adapter uploads bytes (forward push topo).
-export const dependsOn = ['assets'];
+// assets: resolve @asset: refs; email-templates: upload committed DnD shells before
+// emails reference them on the target portal (no-op when manifest has no emailTemplates).
+export const dependsOn = ['assets', 'email-templates'];
 
 async function listMarketingEmails(acct, hub) {
   const out = [];
@@ -54,9 +54,9 @@ function emailsDir(contentDir) {
 }
 
 function readJsonIfExists(path) {
-  if (!existsSync(path)) return null;
+  if (!nodeFs.existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, 'utf8'));
+    return JSON.parse(nodeFs.readFileSync(path, 'utf8'));
   } catch {
     return null;
   }
@@ -72,9 +72,9 @@ function loadSeedKeys(contentDir) {
 
 function loadManifestEmailMap(config) {
   const path = config?.manifestFilePath;
-  if (!path || !existsSync(path)) return { keys: null, byKey: new Map() };
+  if (!path || !nodeFs.existsSync(path)) return { keys: null, byKey: new Map() };
   try {
-    const m = JSON.parse(readFileSync(path, 'utf8'));
+    const m = JSON.parse(nodeFs.readFileSync(path, 'utf8'));
     const entries = Array.isArray(m.emails) ? m.emails : [];
     const byKey = new Map(entries.filter((e) => e?.key).map((e) => [e.key, e]));
     return { keys: new Set(byKey.keys()), byKey };
@@ -103,7 +103,7 @@ function writeSubscriptionsSummary(contentDir, rawEmails) {
       .replace(/^-+|-+$/g, '') || 'none';
     subs[key] = { subscriptionName, count };
   }
-  writeFileSync(
+  nodeFs.writeFileSync(
     join(emailsDir(contentDir), 'subscriptions.json'),
     stableStringify(subs),
   );
@@ -129,7 +129,7 @@ function mergeTemplatePathCandidates(contentDir, rawEmails) {
     modes[e.emailTemplateMode] = (modes[e.emailTemplateMode] || 0) + 1;
   }
   if (Object.keys(existing).length > 0) {
-    writeFileSync(file, stableStringify(existing));
+    nodeFs.writeFileSync(file, stableStringify(existing));
   }
   return Object.keys(existing).length;
 }
@@ -150,7 +150,7 @@ export async function pull(acct, ctx) {
   const { keys: manifestKeys, byKey: manifestByKey } = loadManifestEmailMap(config);
 
   const dir = emailsDir(contentDir);
-  mkdirSync(dir, { recursive: true });
+  nodeFs.mkdirSync(dir, { recursive: true });
 
   const assigned = assignEmailKeys(list, seedKeys);
   let pulled = 0;
@@ -170,7 +170,7 @@ export async function pull(acct, ctx) {
       manifestEntry,
     });
 
-    writeFileSync(join(dir, `${key}.json`), stableStringify(canon));
+    nodeFs.writeFileSync(join(dir, `${key}.json`), stableStringify(canon));
     populateEmailRegistry(registry, [{ key, id: raw.id }]);
     pulled += 1;
 
@@ -205,9 +205,9 @@ export async function pull(acct, ctx) {
 
 function loadManifest(config) {
   const path = config?.manifestFilePath;
-  if (!path || !existsSync(path)) return null;
+  if (!path || !nodeFs.existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, 'utf8'));
+    return JSON.parse(nodeFs.readFileSync(path, 'utf8'));
   } catch {
     return null;
   }
@@ -219,9 +219,9 @@ function loadManifestPushEntries(config) {
 
 function readCanonicalEmail(contentDir, key) {
   for (const file of campaignFileCandidates(contentDir, key)) {
-    if (!existsSync(file)) continue;
+    if (!nodeFs.existsSync(file)) continue;
     try {
-      return JSON.parse(readFileSync(file, 'utf8'));
+      return JSON.parse(nodeFs.readFileSync(file, 'utf8'));
     } catch {
       return null;
     }
@@ -277,7 +277,10 @@ export async function push(acct, ctx) {
     const { key } = manifestEntry;
     const canon = readCanonicalEmail(contentDir, key);
     if (!canon) {
-      throw new Error(`emails push: manifest email "${key}" has no content/emails/${key}.json`);
+      const candidates = campaignFileCandidates(contentDir, key);
+      throw new Error(
+        `emails push: manifest email "${key}" missing campaign file — looked for: ${candidates.join(', ')}`,
+      );
     }
 
     let effectiveManifestEntry = manifestEntry;
@@ -286,9 +289,16 @@ export async function push(acct, ctx) {
       const themeName = config?.theme?.name || 'seventh-sense-theme';
       const shellExists = await committedEmailTemplateExists(acct, intendedTemplate, themeName);
       if (!shellExists) {
+        const allowFallback = ctx.allowTemplateFallback === true;
+        if (!allowFallback) {
+          throw new Error(
+            `emails push: email "${key}" shell "${intendedTemplate}" missing on portal ${acct.portalId} — ` +
+              `run \`hcms push ${acct.name} --only email-templates\` first, or pass --allow-template-fallback`,
+          );
+        }
         notes.push(
           `⚠ email "${key}": shell "${intendedTemplate}" missing on portal — ` +
-            `using ${HUBSPOT_DND_FALLBACK_TEMPLATE}`,
+            `using ${HUBSPOT_DND_FALLBACK_TEMPLATE} (--allow-template-fallback)`,
         );
         effectiveManifestEntry = {
           ...manifestEntry,

@@ -12,7 +12,10 @@ import { fileURLToPath } from 'node:url';
 
 import { emailTemplateEntriesByKey } from '../lib/email-manifest.mjs';
 import { assertEmailTemplateAnnotated } from '../lib/beefree-import.mjs';
+import { localPathFromManifestTemplate } from '../lib/email-dnd.mjs';
 import { THEME_NAME } from './theme.mjs';
+
+export { localPathFromManifestTemplate };
 
 export const name = 'email-templates';
 export const dependsOn = [];
@@ -29,23 +32,6 @@ function loadManifest(config) {
   } catch {
     return null;
   }
-}
-
-/**
- * Strip "<themeName>/" from a manifest emailTemplates[].path value.
- * @param {string} manifestPath e.g. seventh-sense-theme/email-templates/foo.html
- * @param {string} themeName
- * @returns {string} repo-relative path e.g. email-templates/foo.html
- */
-export function localPathFromManifestTemplate(manifestPath, themeName = THEME_NAME) {
-  const prefix = `${themeName}/`;
-  const p = String(manifestPath || '');
-  if (!p.startsWith(prefix)) {
-    throw new Error(
-      `email-templates: manifest path must start with "${prefix}" (got "${p}")`,
-    );
-  }
-  return p.slice(prefix.length);
 }
 
 async function uploadSourceFile(acct, themeName, relPath, buf, { tries = 4 } = {}) {

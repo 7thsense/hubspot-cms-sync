@@ -323,6 +323,8 @@ export function buildEmailPushPayload(canon, {
     campaignWidgets = widgets;
   }
   let widgets = resolvePushWidgets(campaignWidgets, registry);
+  // Committed email-templates/ paths are always DnD shells in this system, even when
+  // emailTemplateMode is unset on older canonical records.
   const isDnD = canon.emailTemplateMode === 'DRAG_AND_DROP'
     || templatePath.includes('/dnd/')
     || isCommittedEmailTemplatePath(templatePath);
