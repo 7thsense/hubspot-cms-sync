@@ -224,13 +224,56 @@ export function validateManifest(m) {
     throw new Error('manifest: uiGated must be an array');
   }
 
+  if (m.emailTemplates != null) {
+    if (!Array.isArray(m.emailTemplates)) {
+      throw new Error('manifest: emailTemplates must be an array when present');
+    }
+    const tplKeys = new Set();
+    for (const t of m.emailTemplates) {
+      if (!t || typeof t !== 'object') {
+        throw new Error('manifest: each emailTemplates entry must be an object');
+      }
+      if (typeof t.key !== 'string' || !t.key) {
+        throw new Error('manifest: each emailTemplates entry must have a non-empty key');
+      }
+      if (tplKeys.has(t.key)) {
+        throw new Error(`manifest: duplicate emailTemplates key "${t.key}"`);
+      }
+      tplKeys.add(t.key);
+      if (typeof t.path !== 'string' || !t.path.includes('email-templates/')) {
+        throw new Error(
+          `manifest: emailTemplates "${t.key}" path must include email-templates/`,
+        );
+      }
+    }
+  }
+
+  if (m.emailBlocks != null) {
+    if (!Array.isArray(m.emailBlocks)) {
+      throw new Error('manifest: emailBlocks must be an array when present');
+    }
+    const blockKeys = new Set();
+    for (const b of m.emailBlocks) {
+      if (!b || typeof b !== 'object') {
+        throw new Error('manifest: each emailBlocks entry must be an object');
+      }
+      if (typeof b.key !== 'string' || !b.key) {
+        throw new Error('manifest: each emailBlocks entry must have a non-empty key');
+      }
+      if (blockKeys.has(b.key)) {
+        throw new Error(`manifest: duplicate emailBlocks key "${b.key}"`);
+      }
+      blockKeys.add(b.key);
+    }
+  }
+
   if (m.emails != null) {
     if (!Array.isArray(m.emails)) {
       throw new Error('manifest: emails must be an array when present');
     }
     const emailKeys = new Set();
     const VALID_EMAIL_STATES = new Set([
-      'ignore', 'pullOnly', 'draftCopy', 'unsupportedAutomated',
+      'ignore', 'pullOnly', 'draft', 'draftCopy', 'workflow', 'unsupportedAutomated',
     ]);
     const VALID_CTA_POLICIES = new Set(['fail', 'linkify']);
     for (const e of m.emails) {
@@ -252,6 +295,21 @@ export function validateManifest(m) {
       if (e.ctaPolicy != null && !VALID_CTA_POLICIES.has(e.ctaPolicy)) {
         throw new Error(
           `manifest: email "${e.key}" has invalid ctaPolicy "${e.ctaPolicy}"`,
+        );
+      }
+      if (e.blocks != null) {
+        if (!Array.isArray(e.blocks) || e.blocks.some((k) => typeof k !== 'string' || !k)) {
+          throw new Error(`manifest: email "${e.key}" blocks must be an array of non-empty strings`);
+        }
+      }
+      if (e.workflow != null && e.desiredState !== 'workflow') {
+        throw new Error(
+          `manifest: email "${e.key}" has workflow metadata but desiredState is not "workflow"`,
+        );
+      }
+      if (e.desiredState === 'workflow' && (!e.workflow || typeof e.workflow !== 'object')) {
+        throw new Error(
+          `manifest: email "${e.key}" desiredState workflow requires a workflow object`,
         );
       }
     }

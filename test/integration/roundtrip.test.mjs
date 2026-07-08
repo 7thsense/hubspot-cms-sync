@@ -46,6 +46,12 @@
 //                      a re-push causes no churn / no duplicate File Manager objects.
 //                      Operates on a SCRATCH content dir with one tiny scratch asset and
 //                      its own .sync-state cache, cleaned up after.  [LIVE dev writes]
+//   • emails         — push a scratch BATCH_EMAIL draft via emails.push (native
+//                      @hubspot Start_from_scratch shell), pull canonicalizes to
+//                      content/emails/campaigns/<key>.json, re-push is a no-op when
+//                      remote matches (semanticEmailFingerprint round-trip). Optional
+//                      block-merge test verifies manifest blocks[] land in live widgets.
+//                      Cleans up via DELETE /marketing/v3/emails/{id}.  [LIVE dev writes]
 //
 // ────────────────────────────────────────────────────────────────────────────
 // HARD SAFETY RULES enforced in this file:
@@ -88,6 +94,9 @@ import {
 import { uploadAsset, uploadTarget, push as assetsPush } from '../../src/adapters/assets.mjs';
 import { pull as pagesPull, push as pagesPush } from '../../src/adapters/pages.mjs';
 import { push as blogPush } from '../../src/adapters/blog.mjs';
+import { pull as emailsPull, push as emailsPush } from '../../src/adapters/emails.mjs';
+import { semanticEmailFingerprint } from '../../src/lib/email-canonical.mjs';
+import { stableStringify } from '../../src/lib/canonical.mjs';
 import { push as orchestratedPush, READ_ONLY_PORTAL } from '../../src/push.mjs';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -103,6 +112,11 @@ const skip = RUN ? false : 'set RUN_INTEGRATION=1 to run live DEV-API integratio
 
 // All scratch resources share this prefix so cleanup is greppable + a re-run is safe.
 const SCRATCH = 'zz-roundtrip-scratch';
+
+// Stable manifest key for scratch emails (name `${SCRATCH} probe email` slugifies here).
+const EMAIL_SCRATCH_KEY = 'zz-roundtrip-scratch-probe-email';
+const EMAIL_BLOCKS_KEY = 'zz-roundtrip-scratch-blocks-email';
+const HUBSPOT_SCRATCH_TEMPLATE = '@hubspot/email/dnd/Start_from_scratch.html';
 
 /**
  * HARD GUARD — refuse to proceed unless we resolved the DEV account. Called at the
@@ -130,6 +144,56 @@ async function deleteScratchFiles(acct, stem) {
   for (const f of hits) {
     await hub(acct, 'DELETE', `/files/v3/files/${f.id}`);
   }
+}
+
+/** Best-effort delete of marketing emails whose display name contains SCRATCH. */
+async function deleteScratchEmails(acct) {
+  const s = await hub(acct, 'GET', '/marketing/v3/emails?limit=100');
+  if (!s.ok) return;
+  for (const e of s.json?.results || []) {
+    if (String(e.name || '').includes(SCRATCH)) {
+      await hub(acct, 'DELETE', `/marketing/v3/emails/${e.id}`);
+    }
+  }
+}
+
+function scratchEmailManifest(emailKey, extra = {}) {
+  return {
+    theme: { name: 'seventh-sense-theme' },
+    pages: [],
+    blog: { slug: 'blog', itemTemplate: 't.html', listingTemplate: 'b.html' },
+    forms: [],
+    uiGated: [],
+    emailBlocks: extra.emailBlocks ?? [],
+    emails: [{
+      key: emailKey,
+      desiredState: extra.desiredState ?? 'draftCopy',
+      ctaPolicy: 'fail',
+      blocks: extra.blocks,
+      ...extra.emailEntry,
+    }],
+  };
+}
+
+function writeScratchEmailCampaign(contentDir, { key, name, html, blocks = [] }) {
+  const campaignsDir = join(contentDir, 'emails', 'campaigns');
+  mkdirSync(campaignsDir, { recursive: true });
+  const canon = {
+    key,
+    name,
+    subject: name,
+    type: 'BATCH_EMAIL',
+    content: {
+      templatePath: HUBSPOT_SCRATCH_TEMPLATE,
+      widgets: {
+        hs_email_body: { body: { html: html ?? `<p>${name}</p>` } },
+      },
+    },
+    from: { fromName: 'Seventh Sense', replyTo: 'hello@example.com' },
+    blocks,
+  };
+  writeFileSync(join(campaignsDir, `${key}.json`), stableStringify(canon));
+  return canon;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -251,7 +315,11 @@ test('content: home widgets pull(pages) -> push(content) -> pull(pages) is byte-
     //    resolves logical refs (reusing the PULL registry so each @form/@asset resolves
     //    back to the identical dev guid/url it was pulled from), PATCHes the home page
     //    DRAFT, and schedules a near-future publish. Identical bytes => no-op republish.
-    const pushRes = await contentPush(acct, { contentDir: dir1, registry: reg1 });
+    // Isolate the publish snapshot under dir1 so re-runs of this suite are not affected
+    // by the website repo's .sync-state (which would skip an already-synced home page).
+    const pushRes = await contentPush(acct, {
+      contentDir: dir1, registry: reg1, snapshotRoot: dir1,
+    });
     assert.ok((pushRes.pushed ?? 0) >= 1, 'pushed the home widgets draft (from embedded home.json)');
 
     // 3. PULL again (pages) into a fresh dir; home.json must be byte-identical.
@@ -570,11 +638,16 @@ test('blog: publish a scratch post twice -> update not duplicate, original date 
     );
 
     const reg2 = emptyRegistry(acct.portalId);
-    // RUN 2 — same slug now exists -> UPDATE the same id, still one post, date preserved.
+    // RUN 2 — same slug + unchanged source + remote still matches snapshot -> SKIP
+    // (no duplicate, no date dance). Re-run idempotency is "pushed 0", not a 2nd write.
     const r2 = await blogPush(acct, {
       contentDir, registry: reg2, publish: true, hubFn: fakeHub, now, sleep,
     });
-    assert.equal(r2.pushed, 1, 'run 2 pushed the one scratch post (as an update)');
+    assert.equal(r2.pushed, 0, 'run 2 skips the unchanged scratch post (publish-snapshot gate)');
+    assert.ok(
+      r2.notes.some((n) => /skipped 1/.test(n)),
+      'run 2 notes report one skipped post',
+    );
     assert.equal(db.posts.size, 1, 'still exactly one post after run 2 — no duplicate slug');
     assert.equal(db.bySlug.get(postSlug), id1, 'run 2 updated the SAME post id (idempotent by slug)');
     assert.equal(
@@ -735,5 +808,189 @@ test('assets: push twice -> 2nd run reuses (uploads 0), no duplicate (dev)', { s
     else process.env.ASSET_FORCE = priorForce;
     await deleteScratchFiles(acct, stem);
     cleanup();
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// emails — push scratch BATCH_EMAIL draft -> pull canonical -> re-push no-op ->
+//   pull again; semantic fingerprint stable. Uses native @hubspot template (no
+//   template-paths.json mapping). Cleans up via DELETE /marketing/v3/emails/{id}.
+// ────────────────────────────────────────────────────────────────────────────
+test('emails: push scratch draft -> pull -> push -> pull is semantically identical (dev)', { skip }, async () => {
+  const acct = account('dev');
+  assertDev(acct);
+
+  const emailName = `${SCRATCH} probe email`;
+  const { root, contentDir, cleanup } = scratchContentRoot('emails-rt');
+  const config = { manifestFilePath: join(root, 'site.manifest.json'), root, contentDirPath: contentDir };
+  const pullDir1 = mkTmp('emails-pull-1');
+  const pullDir2 = mkTmp('emails-pull-2');
+  let emailId = null;
+
+  try {
+    await deleteScratchEmails(acct);
+    writeFileSync(
+      config.manifestFilePath,
+      JSON.stringify(scratchEmailManifest(EMAIL_SCRATCH_KEY)),
+    );
+    writeScratchEmailCampaign(contentDir, {
+      key: EMAIL_SCRATCH_KEY,
+      name: emailName,
+      html: `<p>${SCRATCH} round-trip body {{ contact.firstname }}</p>`,
+    });
+
+    const reg1 = emptyRegistry(acct.portalId);
+    const push1 = await emailsPush(acct, { contentDir, registry: reg1, config });
+    assert.equal(push1.pushed, 1, 'run 1 creates the scratch email on dev');
+    emailId = reg1.emails[EMAIL_SCRATCH_KEY];
+    assert.ok(emailId, 'registry records the new email id');
+
+    const reg2 = emptyRegistry(acct.portalId);
+    const pull1 = await emailsPull(acct, { contentDir: pullDir1, registry: reg2, config });
+    assert.equal(pull1.pulled, 1, 'pull 1 fetched the manifest-listed scratch email');
+    const file1 = join(pullDir1, 'emails', `${EMAIL_SCRATCH_KEY}.json`);
+    assert.ok(existsSync(file1), 'pull wrote canonical email file');
+    const pulled1 = JSON.parse(readFileSync(file1, 'utf8'));
+    assert.equal(reg2.emails[EMAIL_SCRATCH_KEY], emailId);
+    assert.equal(pulled1.key, EMAIL_SCRATCH_KEY);
+    assert.ok(!('id' in pulled1), 'canonical email must not carry id');
+
+    const reg3 = { ...emptyRegistry(acct.portalId), emails: { ...reg2.emails } };
+    const push2 = await emailsPush(acct, { contentDir: pullDir1, registry: reg3, config });
+    assert.equal(push2.pushed, 0, 'run 2 is a no-op when remote already matches canonical payload');
+    assert.ok(
+      push2.notes.some((n) => n.includes(`email = ${EMAIL_SCRATCH_KEY}`)),
+      'run 2 notes report unchanged email',
+    );
+
+    const reg4 = emptyRegistry(acct.portalId);
+    await emailsPull(acct, { contentDir: pullDir2, registry: reg4, config });
+    const pulled2 = JSON.parse(readFileSync(join(pullDir2, 'emails', `${EMAIL_SCRATCH_KEY}.json`), 'utf8'));
+    assert.equal(
+      semanticEmailFingerprint(pulled1),
+      semanticEmailFingerprint(pulled2),
+      'pull -> push -> pull preserves semantic email fingerprint',
+    );
+  } finally {
+    if (emailId) await hub(acct, 'DELETE', `/marketing/v3/emails/${emailId}`);
+    await deleteScratchEmails(acct);
+    cleanup();
+    rmSync(pullDir1, { recursive: true, force: true });
+    rmSync(pullDir2, { recursive: true, force: true });
+  }
+});
+
+test('emails: push scratch draft twice -> create then no-op (dev)', { skip }, async () => {
+  const acct = account('dev');
+  assertDev(acct);
+
+  const emailName = `${SCRATCH} idempotent email`;
+  const emailKey = 'zz-roundtrip-scratch-idempotent-email';
+  const { root, contentDir, cleanup } = scratchContentRoot('emails-idem');
+  const config = { manifestFilePath: join(root, 'site.manifest.json'), root, contentDirPath: contentDir };
+  let emailId = null;
+
+  try {
+    await deleteScratchEmails(acct);
+    writeFileSync(
+      config.manifestFilePath,
+      JSON.stringify(scratchEmailManifest(emailKey)),
+    );
+    writeScratchEmailCampaign(contentDir, {
+      key: emailKey,
+      name: emailName,
+      html: `<p>${SCRATCH} idempotent body</p>`,
+    });
+
+    const reg = emptyRegistry(acct.portalId);
+    const r1 = await emailsPush(acct, { contentDir, registry: reg, config });
+    assert.equal(r1.pushed, 1, 'run 1 creates the scratch email');
+    emailId = reg.emails[emailKey];
+    assert.ok(emailId);
+
+    const r2 = await emailsPush(acct, { contentDir, registry: reg, config });
+    assert.equal(r2.pushed, 0, 'run 2 uploads nothing when payload is unchanged');
+    assert.ok(r2.notes.some((n) => n.includes(`email = ${emailKey}`)));
+
+    const list = await hub(acct, 'GET', '/marketing/v3/emails?limit=100');
+    const matches = (list.json?.results || []).filter((e) => String(e.name) === emailName);
+    assert.equal(matches.length, 1, 'exactly one live email with the scratch name — no duplicate');
+  } finally {
+    if (emailId) await hub(acct, 'DELETE', `/marketing/v3/emails/${emailId}`);
+    await deleteScratchEmails(acct);
+    cleanup();
+  }
+});
+
+test('emails: push merges manifest blocks into live draft widgets (dev)', { skip }, async () => {
+  const acct = account('dev');
+  assertDev(acct);
+
+  const emailName = `${SCRATCH} blocks email`;
+  const blockKey = 'scratch-header';
+  const { root, contentDir, cleanup } = scratchContentRoot('emails-blocks');
+  const config = { manifestFilePath: join(root, 'site.manifest.json'), root, contentDirPath: contentDir };
+  const pullDir = mkTmp('emails-blocks-pull');
+  let emailId = null;
+
+  try {
+    await deleteScratchEmails(acct);
+    const blocksDir = join(contentDir, 'emails', 'blocks');
+    mkdirSync(blocksDir, { recursive: true });
+    writeFileSync(
+      join(blocksDir, `${blockKey}.json`),
+      stableStringify({
+        key: blockKey,
+        widgetName: 'scratch_header',
+        widget: {
+          type: 'rich_text',
+          body: { html: `<p>${SCRATCH} header block</p>` },
+        },
+      }),
+    );
+    writeFileSync(
+      config.manifestFilePath,
+      JSON.stringify(scratchEmailManifest(EMAIL_BLOCKS_KEY, {
+        emailBlocks: [{ key: blockKey }],
+        blocks: [blockKey],
+      })),
+    );
+    writeScratchEmailCampaign(contentDir, {
+      key: EMAIL_BLOCKS_KEY,
+      name: emailName,
+      html: `<p>${SCRATCH} campaign body only</p>`,
+      blocks: [blockKey],
+    });
+
+    const reg = emptyRegistry(acct.portalId);
+    const pushRes = await emailsPush(acct, { contentDir, registry: reg, config });
+    assert.equal(pushRes.pushed, 1);
+    emailId = reg.emails[EMAIL_BLOCKS_KEY];
+    assert.ok(emailId);
+
+    const live = await hub(acct, 'GET', `/marketing/v3/emails/${emailId}`);
+    assert.ok(live.ok, `GET live email -> ${live.status}`);
+    assert.ok(
+      live.json?.content?.widgets?.scratch_header,
+      'live email carries the merged scratch_header widget from blocks/',
+    );
+    assert.ok(
+      live.json?.content?.widgets?.hs_email_body,
+      'live email still carries the campaign hs_email_body widget',
+    );
+
+    const reg2 = emptyRegistry(acct.portalId);
+    const pullRes = await emailsPull(acct, { contentDir: pullDir, registry: reg2, config });
+    assert.equal(pullRes.pulled, 1);
+    const pulled = JSON.parse(readFileSync(join(pullDir, 'emails', `${EMAIL_BLOCKS_KEY}.json`), 'utf8'));
+    assert.ok(
+      pulled.content?.widgets?.scratch_header,
+      'pulled canonical retains scratch_header widget after round-trip',
+    );
+  } finally {
+    if (emailId) await hub(acct, 'DELETE', `/marketing/v3/emails/${emailId}`);
+    await deleteScratchEmails(acct);
+    cleanup();
+    rmSync(pullDir, { recursive: true, force: true });
   }
 });

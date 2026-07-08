@@ -51,6 +51,8 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { hub } from '../lib/hub.mjs';
+import { pushEmailEntries } from '../lib/email-manifest.mjs';
+import { campaignFileCandidates } from '../lib/email-blocks.mjs';
 import { stableStringify } from '../lib/canonical.mjs';
 import { fileToWire } from '../lib/posts-format.mjs';
 
@@ -317,9 +319,7 @@ function manifestEmailKeys(contentDir, config) {
   try {
     const m = JSON.parse(readFileSync(path, 'utf8'));
     const entries = Array.isArray(m.emails) ? m.emails : [];
-    const keys = entries
-      .filter((e) => e?.key && e.desiredState === 'draftCopy')
-      .map((e) => e.key);
+    const keys = pushEmailEntries(m).map((e) => e.key);
     return keys.length > 0 ? new Set(keys) : null;
   } catch {
     return null;
@@ -340,10 +340,15 @@ export function collectReferencedAssetPaths(contentDir, opts = {}) {
   }
   const emailKeys = manifestEmailKeys(contentDir, opts.config);
   if (emailKeys) {
-    const emailsDir = join(contentDir, 'emails');
     for (const key of emailKeys) {
-      const f = join(emailsDir, `${key}.json`);
-      if (existsSync(f)) files.push(f);
+      const hit = campaignFileCandidates(contentDir, key).find((f) => existsSync(f));
+      if (hit) files.push(hit);
+    }
+    const blocksDir = join(contentDir, 'emails', 'blocks');
+    if (existsSync(blocksDir)) {
+      for (const name of readdirSync(blocksDir)) {
+        if (name.endsWith('.json')) files.push(join(blocksDir, name));
+      }
     }
   }
   const paths = new Set();

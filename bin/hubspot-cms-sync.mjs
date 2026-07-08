@@ -15,6 +15,7 @@ import { main as reconcileMain } from '../src/reconcile.mjs';
 import { main as deleteMain } from '../src/deletions.mjs';
 import { main as migrateMain, BACKENDS } from '../src/migrate.mjs';
 import { main as emailInventoryMain } from '../src/email-inventory.mjs';
+import { main as emailImportMain } from '../src/email-import.mjs';
 import { resolve as resolvePath } from 'node:path';
 
 function runNodeScript(script, args, { cwd }) {
@@ -92,7 +93,7 @@ async function main(argv = process.argv) {
     .option('--publish', 'publish/schedule pushed content')
     .option('--force', 'overwrite items that drifted on HubSpot (UI edits) since the last sync')
     .option('--dry-run', 'run local push preflight only')
-    .option('--only <adapters>', 'comma-separated adapter subset (deps included), e.g. emails')
+    .option('--only <adapters>', 'comma-separated adapter subset (deps included), e.g. emails,email-templates')
     .action(async (account, options) => {
       const config = await withConfig(program.opts());
       const only = options.only
@@ -184,6 +185,33 @@ async function main(argv = process.argv) {
     });
 
   const emails = program.command('emails').description('marketing email utilities');
+
+  const importCmd = emails.command('import').description('import external email designs into canonical layout');
+
+  importCmd
+    .command('beefree')
+    .description('import Beefree Simple Schema JSON → campaign + email-templates shell')
+    .argument('<schema>', 'path to Beefree simple schema JSON')
+    .requiredOption('--key <key>', 'campaign logical key')
+    .option('--template <key>', 'email template shell key (defaults to --key)')
+    .option('--theme <name>', 'theme name prefix for templatePath')
+    .option('--name <name>', 'email display name')
+    .option('--subject <subject>', 'email subject line')
+    .option('--write', 'write files to repo (default dry-run)')
+    .action(async (schema, options) => {
+      const config = await withConfig(program.opts());
+      const argv = [
+        schema,
+        '--key', options.key,
+        ...(options.template ? ['--template', options.template] : []),
+        ...(options.theme ? ['--theme', options.theme] : []),
+        ...(options.name ? ['--name', options.name] : []),
+        ...(options.subject ? ['--subject', options.subject] : []),
+        ...(options.write ? ['--write'] : []),
+      ];
+      const code = await emailImportMain(argv, config);
+      if (code) process.exitCode = code;
+    });
 
   emails
     .command('inventory')

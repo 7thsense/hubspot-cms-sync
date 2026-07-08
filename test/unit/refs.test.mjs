@@ -372,6 +372,15 @@ test('listLogicalTokens enumerates tokens for corpus assertions', () => {
   assert.ok(kinds.has('portal'));
 });
 
+test('listLogicalTokens recognizes @email-block tokens', () => {
+  const text = '{"blocks":["@email-block:logo","@email-block:footer-can-spam"]}';
+  const toks = listLogicalTokens(text);
+  assert.deepEqual(
+    toks.filter((t) => t.kind === 'email-block').map((t) => t.key).sort(),
+    ['footer-can-spam', 'logo'],
+  );
+});
+
 test('registerRef mints deterministic keys and is stable on repeat', () => {
   const reg = emptyRegistry('529456');
   const k1 = registerRef(reg, 'ctaGuid', CTA_GUID);

@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import {
+  readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync,
+} from 'node:fs';
+import * as nodeFs from 'node:fs';
 import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -61,6 +65,21 @@ test('canonicalEmail strips read-only fields and sets pushBlockedReasons', () =>
   assert.ok(canon.pushBlockedReasons?.length > 0);
 });
 
+test('committed email template shell skips template-paths.json verification', () => {
+  const canon = {
+    key: 'roundup',
+    content: { templatePath: 'seventh-sense-theme/email-templates/monthly-roundup.html', widgets: {} },
+  };
+  const reasons = computePushBlockedReasons(canon, {
+    manifestEntry: {
+      desiredState: 'draft',
+      templatePath: 'seventh-sense-theme/email-templates/monthly-roundup.html',
+    },
+    templatePaths: {},
+  });
+  assert.equal(reasons.length, 0);
+});
+
 test('draftCopy skips read-only to blocker and native @hubspot template mapping', () => {
   const canon = {
     key: 'nurture',
@@ -75,6 +94,44 @@ test('draftCopy skips read-only to blocker and native @hubspot template mapping'
     templatePaths: {},
   });
   assert.equal(reasons.length, 0);
+});
+
+test('buildEmailPushPayload merges blocks when contentDir provided', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'email-payload-blocks-'));
+  const contentDir = join(dir, 'content');
+  const blocksDir = join(contentDir, 'emails', 'blocks');
+  mkdirSync(blocksDir, { recursive: true });
+  writeFileSync(
+    join(blocksDir, 'logo.json'),
+    JSON.stringify({ widgetName: 'logo_image', widget: { type: 'logo', body: { src: '@asset:logo.jpg' } } }),
+  );
+  try {
+    const canon = {
+      key: 'c',
+      name: 'Campaign',
+      subject: 'Subj',
+      from: { fromName: '', replyTo: '' },
+      content: {
+        templatePath: 'seventh-sense-theme/email-templates/monthly-roundup.html',
+        widgets: { hs_email_body: { body: { html: '<p>Body</p>' } } },
+      },
+    };
+    const registry = emptyRegistry('246389711');
+    registry.assets['logo.jpg'] = 'https://cdn.example/logo.jpg';
+    const body = buildEmailPushPayload(canon, {
+      templatePaths: {},
+      registry,
+      manifestEntry: { desiredState: 'draft', blocks: ['logo'] },
+      contentDir,
+      fs: nodeFs,
+    });
+    assert.ok(body.content.widgets.logo_image);
+    assert.ok(body.content.widgets.hs_email_body);
+    assert.equal(body.content.widgets.hs_email_body.type, 'module');
+    assert.ok(body.content.widgets.hs_email_body.order > 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('buildEmailPushPayload resolves verified generated_layouts mapping', () => {

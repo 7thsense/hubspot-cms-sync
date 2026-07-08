@@ -27,6 +27,8 @@ import { account as realAccount } from './lib/hub.mjs';
 import { loadAdapters as realLoadAdapters, topoSort } from './lib/orchestrate.mjs';
 import { listLogicalTokens } from './lib/refs.mjs';
 import { resolveAssetBytesPath } from './adapters/assets.mjs';
+import { campaignFileCandidates, blockFilePath, knownBlockKeys } from './lib/email-blocks.mjs';
+import { pushEmailEntries, manifestEmailBlockKeys } from './lib/email-manifest.mjs';
 
 import {
   contentDir,
@@ -181,25 +183,29 @@ function knownFormKeys(fs, formsDir) {
   return keys;
 }
 
-function manifestEmailKeys(fs, config, { draftCopyOnly = true } = {}) {
+function loadManifestFromConfig(fs, config) {
   const path = config?.manifestFilePath;
   if (!path || !fs.existsSync(path)) return null;
   try {
-    const m = JSON.parse(fs.readFileSync(path, 'utf8'));
-    const entries = Array.isArray(m.emails) ? m.emails : [];
-    const keys = entries
-      .filter((e) => e?.key && (!draftCopyOnly || e.desiredState === 'draftCopy'))
-      .map((e) => e.key);
-    return keys.length > 0 ? new Set(keys) : null;
+    return JSON.parse(fs.readFileSync(path, 'utf8'));
   } catch {
     return null;
   }
 }
 
+function manifestEmailKeys(fs, config, { pushableOnly = true } = {}) {
+  const m = loadManifestFromConfig(fs, config);
+  if (!m) return null;
+  const entries = pushableOnly ? pushEmailEntries(m) : (Array.isArray(m.emails) ? m.emails : []);
+  const keys = entries.filter((e) => e?.key).map((e) => e.key);
+  return keys.length > 0 ? new Set(keys) : null;
+}
+
 function pushScopeFromOnly(only) {
   if (!only?.length) return 'all';
   const pageConsumers = new Set(['pages', 'content', 'theme', 'blog', 'landing-pages', 'menus']);
-  if (only.includes('emails') && !only.some((a) => pageConsumers.has(a))) {
+  const emailOnly = new Set(['emails', 'email-templates']);
+  if (only.some((a) => emailOnly.has(a)) && !only.some((a) => pageConsumers.has(a))) {
     return 'manifest-emails';
   }
   return 'all';
@@ -220,12 +226,22 @@ function filterOrderForOnly(order, adapters, only) {
   return order.filter((name) => include.has(name));
 }
 
-function manifestEmailPreflightFiles(fs, emailsDir, config) {
+function manifestEmailPreflightFiles(fs, contentDirPath, config) {
   const keys = manifestEmailKeys(fs, config);
   if (!keys) return [];
-  return [...keys]
-    .map((key) => join(emailsDir, `${key}.json`))
-    .filter((f) => fs.existsSync(f));
+  const files = [];
+  for (const key of keys) {
+    const hit = campaignFileCandidates(contentDirPath, key).find((f) => fs.existsSync(f));
+    if (hit) files.push(hit);
+  }
+  const blocksDir = join(contentDirPath, 'emails', 'blocks');
+  if (fs.existsSync(blocksDir)) {
+    for (const key of manifestEmailBlockKeys(loadManifestFromConfig(fs, config))) {
+      const f = blockFilePath(contentDirPath, key);
+      if (fs.existsSync(f)) files.push(f);
+    }
+  }
+  return files;
 }
 
 /**
@@ -255,24 +271,45 @@ export function preflightRefs(contentDirPath, deps = {}) {
   const formsProps = join(formsDir, 'properties.json'); // form field producer source
   const excludeBlog = (p) => p === blogAssetsDir; // skip the whole blog byte subtree
   const excludeForms = (p) => p === formsGuids || p === formsProps;
-  const emailsDir = join(contentDirPath, 'emails');
+  const blockKeys = knownBlockKeys(contentDirPath, fs);
 
   // Every file we must scan for tokens: RECURSIVELY across each ref-bearing canonical
   // tree (pages, blog-minus-bytes, forms-minus-producers) plus manifest-listed email
   // files and the theme ref-bearers. Only manifest emails[] are push-managed — the
   // prod inventory snapshot (300+ files) is not scanned here.
   const files = scope === 'manifest-emails'
-    ? manifestEmailPreflightFiles(fs, emailsDir, config)
+    ? manifestEmailPreflightFiles(fs, contentDirPath, config)
     : [
       ...listJsonFilesRecursive(fs, join(contentDirPath, 'pages')),
       ...listJsonFilesRecursive(fs, join(contentDirPath, 'blog'), excludeBlog),
       ...listJsonFilesRecursive(fs, formsDir, excludeForms),
-      ...manifestEmailPreflightFiles(fs, emailsDir, config),
+      ...manifestEmailPreflightFiles(fs, contentDirPath, config),
       ...themeRefFiles(fs, root),
     ];
 
   // Collect EVERY unsatisfiable ref before throwing (operator fixes them in one pass).
   const offenders = []; // { file, token, reason }
+
+  // Manifest-listed email blocks must exist on disk. Blocks are merged at push time
+  // from manifest blocks[] / emailBlocks[] — campaign JSON rarely carries @email-block:
+  // tokens, so file scanning alone would miss absent producer files.
+  if (config) {
+    const manifest = loadManifestFromConfig(fs, config);
+    if (manifest && pushEmailEntries(manifest).length > 0) {
+      const manifestPath = config.manifestFilePath || join(root, 'site.manifest.json');
+      for (const key of manifestEmailBlockKeys(manifest)) {
+        const blockPath = blockFilePath(contentDirPath, key);
+        if (!fs.existsSync(blockPath)) {
+          offenders.push({
+            file: manifestPath,
+            token: `@email-block:${key}`,
+            reason: `no content/emails/blocks/${key}.json`,
+          });
+        }
+      }
+    }
+  }
+
   for (const file of files) {
     let text;
     try {
@@ -298,6 +335,16 @@ export function preflightRefs(contentDirPath, deps = {}) {
             file,
             token,
             reason: `no committed bytes at content/assets/${key} or content/blog/assets/${key}`,
+          });
+        }
+        continue;
+      }
+      if (kind === 'email-block') {
+        if (!blockKeys.has(key)) {
+          offenders.push({
+            file,
+            token,
+            reason: `no content/emails/blocks/${key}.json`,
           });
         }
         continue;

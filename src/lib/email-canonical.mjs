@@ -7,12 +7,21 @@
 import { stableStringify } from './canonical.mjs';
 import { canonicalize as canonicalizeRefs, resolve as resolveRefs } from './refs.mjs';
 import { resolveCtaEmbeds, ctaGuidsInText } from '../cta-inventory.mjs';
+import {
+  blockKeysForEmail,
+  effectiveEmailTemplatePath,
+  isCommittedEmailTemplatePath,
+} from './email-manifest.mjs';
+import { mergeBlocksIntoCampaign } from './email-blocks.mjs';
+import { buildDnDFlexAreas, normalizeDnDPushWidgets } from './email-dnd.mjs';
 
 export const EMAIL_SIDECAR_FILES = new Set([
   'template-paths.json',
   'subscriptions.json',
   'keys.json',
 ]);
+
+export const EMAIL_NON_CAMPAIGN_DIRS = new Set(['blocks', 'campaigns']);
 
 const READ_ONLY_KEYS = [
   'to',
@@ -203,10 +212,11 @@ export function computePushBlockedReasons(canon, {
   if (unresolvedCtas.length > 0 && ctaPolicy !== 'linkify') {
     reasons.push(`unresolved CTA embed(s): ${[...new Set(unresolvedCtas)].sort().join(', ')}`);
   }
-  const portablePath = canon.content?.templatePath ?? '';
+  const portablePath = effectiveEmailTemplatePath(canon, manifestEntry);
   const isNativeHubspotTemplate = portablePath.startsWith('@hubspot/');
+  const isCommittedShell = isCommittedEmailTemplatePath(portablePath);
   const mappingKey = canon.templateMappingKey ?? templateMappingKeyForPath(portablePath);
-  if (!isNativeHubspotTemplate) {
+  if (!isNativeHubspotTemplate && !isCommittedShell) {
     if (mappingKey) {
       const { verified, targetPath } = resolveTemplateMapping(templatePaths, mappingKey);
       if (!targetPath) {
@@ -219,10 +229,11 @@ export function computePushBlockedReasons(canon, {
     }
   }
   const ds = manifestEntry?.desiredState;
-  if (canon.type === 'AUTOMATED_EMAIL' && ds !== 'draftCopy' && ds !== 'unsupportedAutomated') {
-    reasons.push('AUTOMATED_EMAIL workflow state is not recreated by push (mark draftCopy or pullOnly)');
+  const pushableDraft = ds === 'draft' || ds === 'draftCopy' || ds === 'workflow';
+  if (canon.type === 'AUTOMATED_EMAIL' && !pushableDraft && ds !== 'unsupportedAutomated') {
+    reasons.push('AUTOMATED_EMAIL workflow state is not recreated by push (mark draft/workflow or pullOnly)');
   }
-  if (canon.unsupported?.readOnly?.to && ds !== 'draftCopy') {
+  if (canon.unsupported?.readOnly?.to && !pushableDraft) {
     reasons.push('list/segment targeting (to) is read-only in v1');
   }
   return reasons;
@@ -231,8 +242,9 @@ export function computePushBlockedReasons(canon, {
 /**
  * Resolve the templatePath to send on push (verified mapping for generated_layouts).
  */
-export function resolvePushTemplatePath(canon, templatePaths) {
-  const path = canon.content?.templatePath ?? '';
+export function resolvePushTemplatePath(canon, templatePaths, manifestEntry = null) {
+  const path = effectiveEmailTemplatePath(canon, manifestEntry);
+  if (isCommittedEmailTemplatePath(path)) return path;
   if (path.startsWith('@hubspot/')) return path;
   const mappingKey = canon.templateMappingKey ?? templateMappingKeyForPath(path);
   if (mappingKey) {
@@ -279,13 +291,48 @@ export function resolvePushWidgets(widgets, registry) {
 /**
  * Build the v1 marketing-email POST/PATCH body from a canonical record.
  */
-export function buildEmailPushPayload(canon, { templatePaths, registry, manifestEntry = null } = {}) {
+export function buildEmailPushPayload(canon, {
+  templatePaths,
+  registry,
+  manifestEntry = null,
+  contentDir = null,
+  fs = null,
+} = {}) {
   const reasons = computePushBlockedReasons(canon, { templatePaths, manifestEntry });
   if (reasons.length > 0) {
     throw new Error(`email "${canon.key}": push blocked — ${reasons.join('; ')}`);
   }
-  const templatePath = resolvePushTemplatePath(canon, templatePaths);
-  const widgets = resolvePushWidgets(canon.content?.widgets, registry);
+  const templatePath = resolvePushTemplatePath(canon, templatePaths, manifestEntry);
+  let campaignWidgets = canon.content?.widgets ?? {};
+  const blockKeys = blockKeysForEmail(canon, manifestEntry);
+  if (blockKeys.length > 0) {
+    if (!contentDir || !fs) {
+      throw new Error(`email "${canon.key}": blocks ${blockKeys.join(', ')} require contentDir/fs to merge`);
+    }
+    const { widgets, missing } = mergeBlocksIntoCampaign({
+      contentDir,
+      blockKeys,
+      campaignWidgets,
+      fs,
+    });
+    if (missing.length > 0) {
+      throw new Error(
+        `email "${canon.key}": missing block file(s): ${missing.map((k) => `content/emails/blocks/${k}.json`).join(', ')}`,
+      );
+    }
+    campaignWidgets = widgets;
+  }
+  let widgets = resolvePushWidgets(campaignWidgets, registry);
+  const isDnD = canon.emailTemplateMode === 'DRAG_AND_DROP'
+    || templatePath.includes('/dnd/')
+    || isCommittedEmailTemplatePath(templatePath);
+  if (isDnD) {
+    widgets = normalizeDnDPushWidgets(widgets, { previewText: canon.previewText });
+  }
+  const content = { templatePath, widgets };
+  if (isDnD) {
+    content.flexAreas = buildDnDFlexAreas(widgets);
+  }
   return {
     name: canon.name,
     subject: canon.subject,
@@ -293,7 +340,7 @@ export function buildEmailPushPayload(canon, { templatePaths, registry, manifest
       fromName: canon.from?.fromName ?? '',
       replyTo: canon.from?.replyTo ?? '',
     },
-    content: { templatePath, widgets },
+    content,
   };
 }
 

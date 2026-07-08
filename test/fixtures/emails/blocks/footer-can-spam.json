@@ -1,0 +1,13 @@
+{
+  "key": "footer-can-spam",
+  "widgets": {
+    "email_can_spam": {
+      "type": "module",
+      "name": "email_can_spam",
+      "body": {
+        "unsubscribe_link_type": "unsubscribe",
+        "align": "center"
+      }
+    }
+  }
+}

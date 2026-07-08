@@ -53,6 +53,8 @@ test('isThemePath ACCEPTS theme dirs and the two root theme files', () => {
     'templates/page.html',
     'modules/audit-cta.module/meta.json',
     'modules/audit-cta.module/module.html',
+    'email-templates/monthly-roundup.html',
+    'email-modules/card.module/module.html',
     'css/main.css',
     'js/hs-forms.js',
     'images/logo.png',

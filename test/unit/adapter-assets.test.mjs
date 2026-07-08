@@ -313,6 +313,48 @@ test('collectReferencedAssetPaths unions page json AND blog .md frontmatter cove
   }
 });
 
+test('collectReferencedAssetPaths manifest-emails scope scans campaigns + blocks only', () => {
+  const root = mkdtempSync(join(tmpdir(), 'assets-email-scope-'));
+  const dir = join(root, 'content');
+  try {
+    mkdirSync(join(dir, 'pages'), { recursive: true });
+    writeFileSync(
+      join(dir, 'pages', 'home.json'),
+      JSON.stringify({ widgets: { hero: { body: { img: '@asset:page-only.png' } } } }),
+    );
+    mkdirSync(join(dir, 'emails', 'campaigns'), { recursive: true });
+    mkdirSync(join(dir, 'emails', 'blocks'), { recursive: true });
+    writeFileSync(
+      join(dir, 'emails', 'campaigns', 'roundup.json'),
+      JSON.stringify({ content: { widgets: { body: { html: '@asset:campaign-hero.jpg' } } } }),
+    );
+    writeFileSync(
+      join(dir, 'emails', 'blocks', 'logo.json'),
+      JSON.stringify({ widget: { body: { src: '@asset:seventh-sense-logo.jpg' } } }),
+    );
+    writeFileSync(
+      join(root, 'site.manifest.json'),
+      JSON.stringify({
+        theme: { name: 't' },
+        pages: [],
+        blog: { slug: 'b', itemTemplate: 'a', listingTemplate: 'b' },
+        forms: [],
+        uiGated: [],
+        emails: [{ key: 'roundup', desiredState: 'draft' }],
+        emailBlocks: [{ key: 'logo' }],
+      }),
+    );
+    const got = collectReferencedAssetPaths(dir, {
+      scope: 'manifest-emails',
+      config: { manifestFilePath: join(root, 'site.manifest.json') },
+    }).sort();
+    assert.deepEqual(got, ['campaign-hero.jpg', 'seventh-sense-logo.jpg']);
+    assert.ok(!got.includes('page-only.png'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('push uploads a blog .md featuredImage cover whose bytes are committed, and registers it', async (t) => {
   // End-to-end: a blog post .md references its cover via frontmatter featuredImage;
   // the bytes are committed under content/assets/<key>. The assets adapter must now

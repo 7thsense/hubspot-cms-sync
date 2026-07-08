@@ -65,7 +65,7 @@ const REPO_ROOT = join(__dirname, '..', '..');
 // The theme tree, relative to whatever root we operate on (repo root on pull-write,
 // a temp build dir on push). Directories are walked recursively; loose files copied
 // as-is. images/ is binary and copied verbatim — never text-normalized.
-const THEME_DIRS = ['templates', 'modules', 'css', 'js', 'images'];
+const THEME_DIRS = ['templates', 'email-templates', 'modules', 'email-modules', 'css', 'js', 'images'];
 const THEME_FILES = ['theme.json', 'fields.json'];
 
 /**
@@ -100,7 +100,7 @@ const REF_BEARING = (relPath) => {
     // assets (e.g. og:image, founder/product photos). Resolve them to the
     // target's hosted URL on push, same as module.html — keeps content images
     // (webp included, which the theme source rejects) out of the theme tree.
-    (p.startsWith('templates/') && p.endsWith('.html'))
+    ((p.startsWith('templates/') || p.startsWith('email-templates/')) && p.endsWith('.html'))
   );
 };
 

@@ -5,12 +5,19 @@
 // registry.emails[key] = hubspotId. Push upserts manifest draftCopy emails as
 // BATCH_EMAIL / DRAFT content clones on the target account.
 
+import * as nodeFs from 'node:fs';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { hub as defaultHub } from '../lib/hub.mjs';
 import { stableStringify } from '../lib/canonical.mjs';
 import { loadInventory } from '../cta-inventory.mjs';
+import { campaignFileCandidates } from '../lib/email-blocks.mjs';
+import { pushEmailEntries, isWorkflowEmail, effectiveEmailTemplatePath, isCommittedEmailTemplatePath } from '../lib/email-manifest.mjs';
+import {
+  committedEmailTemplateExists,
+  HUBSPOT_DND_FALLBACK_TEMPLATE,
+} from '../lib/email-dnd.mjs';
 import {
   assignEmailKeys,
   buildEmailPushPayload,
@@ -196,26 +203,30 @@ export async function pull(acct, ctx) {
   return { pulled, notes };
 }
 
-function loadManifestPushEntries(config) {
+function loadManifest(config) {
   const path = config?.manifestFilePath;
-  if (!path || !existsSync(path)) return [];
+  if (!path || !existsSync(path)) return null;
   try {
-    const m = JSON.parse(readFileSync(path, 'utf8'));
-    const entries = Array.isArray(m.emails) ? m.emails : [];
-    return entries.filter((e) => e?.key && e.desiredState === 'draftCopy');
-  } catch {
-    return [];
-  }
-}
-
-function readCanonicalEmail(contentDir, key) {
-  const file = join(emailsDir(contentDir), `${key}.json`);
-  if (!existsSync(file)) return null;
-  try {
-    return JSON.parse(readFileSync(file, 'utf8'));
+    return JSON.parse(readFileSync(path, 'utf8'));
   } catch {
     return null;
   }
+}
+
+function loadManifestPushEntries(config) {
+  return pushEmailEntries(loadManifest(config));
+}
+
+function readCanonicalEmail(contentDir, key) {
+  for (const file of campaignFileCandidates(contentDir, key)) {
+    if (!existsSync(file)) continue;
+    try {
+      return JSON.parse(readFileSync(file, 'utf8'));
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 function indexEmailsByName(list) {
@@ -252,7 +263,7 @@ export async function push(acct, ctx) {
   const notes = [];
   const manifestEntries = loadManifestPushEntries(config);
   if (manifestEntries.length === 0) {
-    return { pushed: 0, notes: ['no manifest draftCopy emails — skipped'] };
+    return { pushed: 0, notes: ['no manifest pushable emails (draft/draftCopy/workflow) — skipped'] };
   }
 
   const templatePaths = loadTemplatePaths(contentDir);
@@ -269,7 +280,35 @@ export async function push(acct, ctx) {
       throw new Error(`emails push: manifest email "${key}" has no content/emails/${key}.json`);
     }
 
-    const body = buildEmailPushPayload(canon, { templatePaths, registry, manifestEntry });
+    let effectiveManifestEntry = manifestEntry;
+    const intendedTemplate = effectiveEmailTemplatePath(canon, manifestEntry);
+    if (isCommittedEmailTemplatePath(intendedTemplate)) {
+      const themeName = config?.theme?.name || 'seventh-sense-theme';
+      const shellExists = await committedEmailTemplateExists(acct, intendedTemplate, themeName);
+      if (!shellExists) {
+        notes.push(
+          `⚠ email "${key}": shell "${intendedTemplate}" missing on portal — ` +
+            `using ${HUBSPOT_DND_FALLBACK_TEMPLATE}`,
+        );
+        effectiveManifestEntry = {
+          ...manifestEntry,
+          templatePath: HUBSPOT_DND_FALLBACK_TEMPLATE,
+        };
+      }
+    }
+
+    const body = buildEmailPushPayload(canon, {
+      templatePaths,
+      registry,
+      manifestEntry: effectiveManifestEntry,
+      contentDir,
+      fs: nodeFs,
+    });
+    if (isWorkflowEmail(manifestEntry)) {
+      notes.push(
+        `workflow ${key}: draft pushed — attach to workflow "${manifestEntry.workflow?.sequence ?? '?'}" step ${manifestEntry.workflow?.step ?? '?'} manually in HubSpot`,
+      );
+    }
     const targetId = await resolveTargetEmailId(
       acct, hub, key, body.name, registry, byName,
     );
@@ -282,7 +321,7 @@ export async function push(acct, ctx) {
             key, registry, templatePaths, manifestEntry,
           }).canon;
           const remoteBody = buildEmailPushPayload(remoteCanon, {
-            templatePaths, registry, manifestEntry,
+            templatePaths, registry, manifestEntry: effectiveManifestEntry, contentDir, fs: nodeFs,
           });
           if (stableStringify(body) === stableStringify(remoteBody)) {
             upserted.push({ key, id: targetId });

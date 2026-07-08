@@ -1,0 +1,55 @@
+{
+  "template": {
+    "type": "email",
+    "metadata": {
+      "lang": "en",
+      "title": "Inside Insights — Monthly Marketing Roundup",
+      "subject": "Inside Insights: your monthly marketing roundup",
+      "preheader": "Articles, tools, and job postings from the Seventh Sense team"
+    },
+    "settings": {
+      "width": 600,
+      "backgroundColor": "#f5f8fa",
+      "contentAreaBackgroundColor": "#ffffff",
+      "linkColor": "#00a4bd"
+    },
+    "rows": [
+      {
+        "columns": [
+          {
+            "modules": [
+              {
+                "type": "paragraph",
+                "text": "Hi {{ contact.firstname }},"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "modules": [
+              {
+                "type": "paragraph",
+                "text": "Welcome to <strong>Inside Insights</strong> — our monthly roundup of articles, tools, and job postings."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "columns": [
+          {
+            "modules": [
+              {
+                "type": "paragraph",
+                "text": "<a href=\"https://www.theseventhsense.com/blog\">Read the latest on our blog</a>"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

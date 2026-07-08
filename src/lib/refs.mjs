@@ -96,11 +96,12 @@ const TOKEN = {
   cta: (key) => `@cta:${key}`,
   asset: (key) => `@asset:${key}`,
   menu: (key) => `@menu:${key}`,
+  emailBlock: (key) => `@email-block:${key}`,
   portal: () => `@portal`,
 };
 // Matches any logical token we emit, for resolve() to scan/replace/validate.
 // `@asset:` allows `/` and `.`; others are slug-ish.
-const TOKEN_RE = /@(form|cta|menu):([A-Za-z0-9_-]+)|@asset:([^\s"'\\),]+)|@portal\b/g;
+const TOKEN_RE = /@(form|cta|menu|email-block):([A-Za-z0-9_-]+)|@asset:([^\s"'\\),]+)|@portal\b/g;
 
 // ---------------------------------------------------------------------------
 // Registry — per-account map of logicalKey<->rawId, one sub-map per namespace.
@@ -400,6 +401,7 @@ export function listLogicalTokens(str) {
   for (const m of str.matchAll(TOKEN_RE)) {
     if (m[0] === '@portal') out.push({ kind: 'portal', key: null, token: '@portal' });
     else if (m[3] != null) out.push({ kind: 'asset', key: m[3], token: m[0] });
+    else if (m[1] === 'email-block') out.push({ kind: 'email-block', key: m[2], token: m[0] });
     else out.push({ kind: m[1], key: m[2], token: m[0] });
   }
   return out;

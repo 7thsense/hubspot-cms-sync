@@ -179,13 +179,161 @@ test('push creates manifest draftCopy emails and registers ids', async () => {
   }
 });
 
-test('push skips when manifest has no draftCopy emails', async () => {
+test('push skips when manifest has no pushable emails', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'emails-push-skip-'));
   try {
     const r = await push(ACCT, { contentDir: join(dir, 'content'), registry: emptyRegistry('1'), config: {} });
     assert.equal(r.pushed, 0);
-    assert.ok(r.notes[0].includes('no manifest draftCopy'));
+    assert.ok(r.notes[0].includes('no manifest pushable emails'));
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('push creates manifest draft emails (not only draftCopy)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'emails-push-draft-'));
+  const contentDir = join(dir, 'content');
+  const emailsDir = join(contentDir, 'emails', 'campaigns');
+  const config = {
+    root: dir,
+    contentDirPath: contentDir,
+    manifestFilePath: join(dir, 'site.manifest.json'),
+  };
+  const registry = emptyRegistry('246389711');
+  const created = [];
+
+  const hub = async (acct, method, path, body) => {
+    if (method === 'GET' && path.startsWith('/marketing/v3/emails')) {
+      return { ok: true, status: 200, json: { results: created } };
+    }
+    if (method === 'POST' && path === '/marketing/v3/emails') {
+      const id = '888001';
+      created.push({ ...body, id, type: 'BATCH_EMAIL', state: 'DRAFT' });
+      return { ok: true, status: 201, json: { id } };
+    }
+    return { ok: false, status: 404, json: {} };
+  };
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('source-code/published/content/')) {
+      return { ok: true, status: 200 };
+    }
+    return origFetch(url);
+  };
+
+  try {
+    mkdirSync(emailsDir, { recursive: true });
+    writeFileSync(
+      config.manifestFilePath,
+      JSON.stringify({
+        theme: { name: 't' },
+        pages: [],
+        blog: { slug: 'b', itemTemplate: 'a', listingTemplate: 'b' },
+        forms: [],
+        uiGated: [],
+        emails: [{
+          key: 'monthly-roundup',
+          desiredState: 'draft',
+          templatePath: 'seventh-sense-theme/email-templates/monthly-roundup.html',
+        }],
+      }),
+    );
+    writeFileSync(
+      join(emailsDir, 'monthly-roundup.json'),
+      stableStringify({
+        key: 'monthly-roundup',
+        name: 'Monthly Roundup',
+        subject: 'July insights',
+        content: {
+          templatePath: 'seventh-sense-theme/email-templates/monthly-roundup.html',
+          widgets: { hs_email_body: { body: { html: '<p>Hi</p>' } } },
+        },
+        from: { fromName: 'Seventh Sense', replyTo: 'hello@example.com' },
+      }),
+    );
+
+    const r = await push(ACCT, { contentDir, registry, config, hub });
+    assert.equal(r.pushed, 1);
+    assert.equal(registry.emails['monthly-roundup'], '888001');
+    assert.equal(
+      created[0].content.templatePath,
+      'seventh-sense-theme/email-templates/monthly-roundup.html',
+    );
+    assert.equal(created[0].content.widgets.hs_email_body.type, 'module');
+  } finally {
+    globalThis.fetch = origFetch;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('push falls back to Start_from_scratch when committed shell missing on portal', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'emails-push-fallback-'));
+  const contentDir = join(dir, 'content');
+  const emailsDir = join(contentDir, 'emails', 'campaigns');
+  const config = {
+    root: dir,
+    contentDirPath: contentDir,
+    manifestFilePath: join(dir, 'site.manifest.json'),
+  };
+  const registry = emptyRegistry('246389711');
+  const created = [];
+  const hub = async (acct, method, path, body) => {
+    if (method === 'GET' && path.startsWith('/marketing/v3/emails')) {
+      return { ok: true, status: 200, json: { results: created } };
+    }
+    if (method === 'POST' && path === '/marketing/v3/emails') {
+      const id = '888002';
+      created.push({ ...body, id });
+      return { ok: true, status: 201, json: { id } };
+    }
+    return { ok: false, status: 404, json: {} };
+  };
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('source-code/published/content/')) {
+      return { ok: false, status: 404 };
+    }
+    return origFetch(url);
+  };
+
+  try {
+    mkdirSync(emailsDir, { recursive: true });
+    writeFileSync(
+      config.manifestFilePath,
+      JSON.stringify({
+        theme: { name: 'seventh-sense-theme' },
+        pages: [],
+        blog: { slug: 'b', itemTemplate: 'a', listingTemplate: 'b' },
+        forms: [],
+        uiGated: [],
+        emails: [{
+          key: 'fallback-email',
+          desiredState: 'draft',
+          templatePath: 'seventh-sense-theme/email-templates/monthly-roundup.html',
+        }],
+      }),
+    );
+    writeFileSync(
+      join(emailsDir, 'fallback-email.json'),
+      stableStringify({
+        key: 'fallback-email',
+        name: 'Fallback',
+        subject: 'Subj',
+        emailTemplateMode: 'DRAG_AND_DROP',
+        content: {
+          templatePath: 'seventh-sense-theme/email-templates/monthly-roundup.html',
+          widgets: { hs_email_body: { type: 'rich_text', body: { html: '<p>x</p>' } } },
+        },
+        from: { fromName: '', replyTo: '' },
+      }),
+    );
+
+    const r = await push(ACCT, { contentDir, registry, config, hub });
+    assert.equal(r.pushed, 1);
+    assert.match(created[0].content.templatePath, /Start_from_scratch/);
+    assert.ok(r.notes.some((n) => n.includes('missing on portal')));
+  } finally {
+    globalThis.fetch = origFetch;
     rmSync(dir, { recursive: true, force: true });
   }
 });

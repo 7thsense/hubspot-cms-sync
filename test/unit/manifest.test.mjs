@@ -128,6 +128,65 @@ test('validateManifest requires uiGated to be an array', () => {
   assert.throws(() => validateManifest(m), /uiGated must be an array/);
 });
 
+// ── validateManifest: email templates, blocks, workflow ─────────────────────
+
+test('validateManifest accepts emailTemplates, emailBlocks, and workflow emails', () => {
+  const m = validManifest();
+  m.emailTemplates = [{
+    key: 'monthly-roundup',
+    path: `${THEME_NAME}/email-templates/monthly-roundup.html`,
+    verified: true,
+  }];
+  m.emailBlocks = [{ key: 'logo' }, { key: 'footer-can-spam' }];
+  m.emails = [{
+    key: 'inside-insights',
+    desiredState: 'draft',
+    templatePath: `${THEME_NAME}/email-templates/monthly-roundup.html`,
+    blocks: ['logo', 'footer-can-spam'],
+  }, {
+    key: 'onboarding-1',
+    desiredState: 'workflow',
+    templatePath: `${THEME_NAME}/email-templates/monthly-roundup.html`,
+    blocks: ['logo'],
+    workflow: { sequence: 'onboarding', step: 1, attachManually: true },
+  }];
+  assert.doesNotThrow(() => validateManifest(m));
+});
+
+test('validateManifest rejects emailTemplates without email-templates/ path', () => {
+  const m = validManifest();
+  m.emailTemplates = [{ key: 'bad', path: 'templates/foo.html' }];
+  assert.throws(() => validateManifest(m), /must include email-templates\//);
+});
+
+test('validateManifest rejects duplicate emailBlocks keys', () => {
+  const m = validManifest();
+  m.emailBlocks = [{ key: 'logo' }, { key: 'logo' }];
+  assert.throws(() => validateManifest(m), /duplicate emailBlocks key "logo"/);
+});
+
+test('validateManifest rejects workflow email without workflow object', () => {
+  const m = validManifest();
+  m.emails = [{ key: 'wf', desiredState: 'workflow' }];
+  assert.throws(() => validateManifest(m), /requires a workflow object/);
+});
+
+test('validateManifest rejects workflow metadata on non-workflow desiredState', () => {
+  const m = validManifest();
+  m.emails = [{
+    key: 'wf',
+    desiredState: 'draft',
+    workflow: { sequence: 'onboarding', step: 1 },
+  }];
+  assert.throws(() => validateManifest(m), /workflow metadata but desiredState is not "workflow"/);
+});
+
+test('validateManifest rejects invalid email desiredState', () => {
+  const m = validManifest();
+  m.emails = [{ key: 'x', desiredState: 'published' }];
+  assert.throws(() => validateManifest(m), /invalid desiredState "published"/);
+});
+
 // ── generateManifest: excludes the AB/archived/temp junk ─────────────────────
 
 // A representative slice of the real account: a handful of REDESIGN pages mixed

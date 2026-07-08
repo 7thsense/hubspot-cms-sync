@@ -1,0 +1,16 @@
+{
+  "key": "logo",
+  "widgetName": "logo_image",
+  "widget": {
+    "type": "logo",
+    "name": "logo_image",
+    "label": "Logo",
+    "body": {
+      "src": "@asset:seventh-sense-logo.jpg",
+      "alt": "Seventh Sense",
+      "width": 280,
+      "height": 42,
+      "link": "https://www.theseventhsense.com"
+    }
+  }
+}
