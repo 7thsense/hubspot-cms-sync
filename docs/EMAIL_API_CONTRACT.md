@@ -187,9 +187,12 @@ unstyled white canvas.
 | **`content.flexAreas.main` with `boxed: true`** | Logo + body grouped; `boxFirstElementIndex: 0`, `boxLastElementIndex: 1`. |
 | **Widget `module_id` (`type: "module"`)** | `emailBody` 1155639, `emailLinkedImage` 1367093, `emailCanSpam` 2869621. `rich_text` → `module` on push. |
 
-**Templates:** `@hubspot/email/dnd/Start_from_scratch.html` is proven in prod.
-Theme shells under `email-templates/` work for slot structure when uploaded first
-(`hcms push <account> --only email-templates`).
+**Templates:** Push campaigns with `@hubspot/email/dnd/Start_from_scratch.html`
+for `DRAG_AND_DROP` editor mode. Committed `email-templates/*.html` shells upload
+to the theme but HubSpot **forces `DESIGN_MANAGER`** on prod when a campaign uses
+them — styles break in the editor. Keep Beefree visual design in **widget HTML +
+`styleSettings`** (via `hcms emails import beefree`); use `monthly-roundup.html`
+as a slot scaffold only, not as the live `templatePath`.
 
 **Prod writes:** `readOnlyPortalIds` blocks prod by default; set
 `HCMS_ALLOW_PROD_PUSH=1` for one-off prod pushes.
