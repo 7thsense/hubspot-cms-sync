@@ -50,6 +50,70 @@ export function rewriteBeefreeImageRefs(html, assetPrefix) {
   return out;
 }
 
+const TABLE_WITH_BG_RE = /<table\b([^>]*\bstyle="[^"]*background-image:\s*url\(\s*(['"]?)([^)'"]+)\2\s*\)[^"]*"[^>]*)>/i;
+const TABLE_TBODY_TD_RE = /<tbody>\s*<tr>\s*<td[^>]*>/i;
+
+/**
+ * Build a full-width <img> block for a Beefree table background.
+ * HubSpot's DnD editor preview often ignores CSS background-image on <table>;
+ * materializing to <img> keeps the visual editor faithful to sent email.
+ *
+ * @param {string} url — already tokenized (@asset:… or absolute)
+ */
+export function beefreeBackgroundImageBlock(url) {
+  return (
+    '<table class="image_block beefree-bg" width="100%" border="0" cellpadding="0" cellspacing="0" '
+    + 'role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">'
+    + '<tr><td align="center" style="width:100%;">'
+    + `<img src="${url}" style="display:block;height:auto;border:0;width:100%;" width="680" alt="" height="auto">`
+    + '</td></tr></table>'
+  );
+}
+
+/**
+ * Replace CSS background-image on Beefree layout tables with explicit <img> rows.
+ * Strips background-image/position/repeat from the table style after materializing.
+ *
+ * @param {string} html
+ * @returns {string}
+ */
+export function materializeBeefreeBackgroundImages(html) {
+  let out = String(html || '');
+  let guard = 0;
+  while (guard++ < 32) {
+    const m = out.match(TABLE_WITH_BG_RE);
+    if (!m) break;
+    const full = m[0];
+    const url = m[3];
+    const attrs = m[1];
+    const cleanedAttrs = attrs.replace(
+      /style="([^"]*)"/i,
+      (_whole, style) => {
+        const cleaned = style
+          .replace(/background-image:\s*url\([^)]+\);?\s*/gi, '')
+          .replace(/background-position:[^;]+;?\s*/gi, '')
+          .replace(/background-repeat:[^;]+;?\s*/gi, '');
+        return `style="${cleaned}"`;
+      },
+    );
+    const newTable = `<table${cleanedAttrs}>`;
+    const tableIdx = out.indexOf(full);
+    if (tableIdx < 0) break;
+    const afterTable = out.slice(tableIdx + full.length);
+    const tdMatch = afterTable.match(TABLE_TBODY_TD_RE);
+    const head = out.slice(0, tableIdx) + newTable;
+    if (!tdMatch) {
+      out = head + afterTable;
+      continue;
+    }
+    const insertPos = tableIdx + full.length + tdMatch.index + tdMatch[0].length;
+    out = head + afterTable.slice(0, tdMatch.index + tdMatch[0].length)
+      + beefreeBackgroundImageBlock(url)
+      + afterTable.slice(tdMatch.index + tdMatch[0].length);
+  }
+  return out;
+}
+
 /**
  * Pull responsive CSS and optional Google Font links from Beefree <head>.
  * @param {string} html
@@ -97,7 +161,8 @@ export function beefreeHtmlToEmailBody(html, assetPrefix) {
   const head = extractBeefreeHeadFragment(html);
   const body = extractBeefreeBodyFragment(html);
   const combined = `${head}\n${body}`;
-  return rewriteBeefreeImageRefs(combined, assetPrefix);
+  const tokenized = rewriteBeefreeImageRefs(combined, assetPrefix);
+  return materializeBeefreeBackgroundImages(tokenized);
 }
 
 /**
@@ -266,6 +331,7 @@ export function projectBeefreeZipImport({
   const notes = [
     `zip import: ${Object.keys(widgets).length} body widget(s), full-bleed Beefree HTML`,
     `assets: rewrite images/* → @asset:${assetPrefix}/*`,
+    'materialize: CSS table background-image → <img> rows (HubSpot DnD editor preview)',
     `templatePath: ${templatePath} (DRAG_AND_DROP — do not use committed theme shells)`,
     'module padding disabled on hs_email_body for full-bleed layout',
   ];

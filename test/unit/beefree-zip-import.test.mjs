@@ -13,6 +13,8 @@ import { execFileSync } from 'node:child_process';
 import {
   beefreeAssetPrefix,
   rewriteBeefreeImageRefs,
+  materializeBeefreeBackgroundImages,
+  beefreeBackgroundImageBlock,
   extractBeefreeBodyFragment,
   extractBeefreeHeadFragment,
   beefreeHtmlToEmailBody,
@@ -50,11 +52,22 @@ test('extractBeefreeHeadFragment and extractBeefreeBodyFragment preserve layout'
   assert.match(body, /<!-- End -->/);
 });
 
+test('materializeBeefreeBackgroundImages converts table backgrounds to img blocks', () => {
+  const html = '<table style="background-color:#000;background-image: url(\'@asset:beefree/demo/hero.png\'); background-repeat:no-repeat;"><tbody><tr><td><p>Hi</p></td></tr></tbody></table>';
+  const out = materializeBeefreeBackgroundImages(html);
+  assert.doesNotMatch(out, /background-image:/);
+  assert.match(out, /src="@asset:beefree\/demo\/hero\.png"/);
+  assert.match(out, /class="image_block beefree-bg"/);
+  assert.match(out, /<p>Hi<\/p>/);
+});
+
 test('beefreeHtmlToEmailBody rewrites all image refs in composed fragment', () => {
   const html = loadHtml();
   const out = beefreeHtmlToEmailBody(html, beefreeAssetPrefix('pub-party-mini'));
   assert.doesNotMatch(out, /src="images\//);
   assert.match(out, /@asset:beefree\/pub-party-mini\//);
+  assert.doesNotMatch(out, /background-image:/);
+  assert.match(out, /class="image_block beefree-bg"/);
 });
 
 test('beefreeHtmlToStyleSettings maps dark outer background', () => {

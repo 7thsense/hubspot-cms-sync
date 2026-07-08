@@ -203,11 +203,15 @@ as a slot scaffold only, not as the live `templatePath`.
 Schema import (`hcms emails import beefree`) — maps `title`, `divider`, `button`,
 and styled `paragraph` modules to DnD widget HTML plus `styleSettings` from
 `template.settings`; Beefree **HTML+images zip** import (`hcms emails import
-beefree-zip`) — preserves full visual layout (hero backgrounds, galleries, row
-styles) in a single full-bleed `hs_email_body` widget, copies `images/*` to
-`content/assets/beefree/<key>/`, and pins `templatePath` to
+beefree-zip`, **≥ 0.26.2**) — preserves full visual layout in a single
+full-bleed `hs_email_body` widget, copies `images/*` to
+`content/assets/beefree/<key>/`, materializes CSS table `background-image` to
+`<img>` rows for HubSpot DnD editor preview, and pins `templatePath` to
 `@hubspot/email/dnd/Start_from_scratch.html` for `DRAG_AND_DROP` editor mode;
-reusable blocks; semantic round-trip fingerprint.
+`content.spec.json` copy overlay + `beefree-apply-content`; reusable blocks;
+semantic round-trip fingerprint.
+
+**Operator runbook:** [`BEEFREE_ZIP_IMPORT.md`](BEEFREE_ZIP_IMPORT.md).
 
 **Out of scope:** workflow enrollment recreation; `subscriptionDetails` ID
 fidelity; `to` / segment targeting; published-sent campaign replay; byte-identical
@@ -225,6 +229,7 @@ hcms push dev --only emails --allow-template-fallback   # dev without Marketing 
 HCMS_ALLOW_PROD_PUSH=1 hcms push prod --only emails   # prod (scoped manifest recommended)
 hcms emails import beefree schema.json --key <campaign> --template <shell-key> --write
 hcms emails import beefree-zip export.zip --key <campaign> --name "Display name" --write
+hcms emails import beefree-apply-content --key <campaign> --write
 ```
 
 ### Beefree zip import (HTML export)
@@ -235,11 +240,13 @@ catalog templates with hero images, row backgrounds, and galleries. The importer
 1. Unpacks the zip (requires `unzip` on PATH) or reads an extracted directory
 2. Copies images → `content/assets/beefree/<key>/`
 3. Rewrites `images/foo.png` → `@asset:beefree/<key>/foo.png` in widget HTML
-4. Composes widget HTML from `<head>` styles + `nl-container` body (keeps
+4. Materializes CSS `background-image` on layout `<table>` rows to `<img>` blocks
+   (`beefree-bg`) — HubSpot's DnD editor preview ignores table backgrounds
+5. Composes widget HTML from `<head>` styles + `nl-container` body (keeps
    responsive `@media` rules)
-5. Writes provenance under `imports/beefree/<key>/` (`source.index.html`,
-   `import.meta.json`, and `source.zip` when imported from zip)
-6. Emits `content/emails/campaigns/<key>.json` with `emailTemplateMode:
+6. Writes provenance under `imports/beefree/<key>/` (`source.index.html`,
+   `customized.index.html`, `import.meta.json`, and `source.zip` when imported from zip)
+7. Emits `content/emails/campaigns/<key>.json` with `emailTemplateMode:
    DRAG_AND_DROP` and `templatePath: @hubspot/email/dnd/Start_from_scratch.html`
 
 **Do not** point zip-imported campaigns at committed `email-templates/*.html`

@@ -1,0 +1,22 @@
+{
+  "key": "example-newsletter-2026-07",
+  "description": "Example content overlay — anchor find strings on exact Beefree HTML",
+  "columnPatches": [
+    {
+      "imageFile": "4_Snacks.png",
+      "titleFrom": "TACOS",
+      "titleTo": "ARTICLE ONE",
+      "body": "Card body with <a href=\"https://example.com/blog/post-one\" style=\"color:#00a4bd;\">Read more</a>."
+    }
+  ],
+  "replacements": [
+    {
+      "find": "<p style=\"margin: 0; word-break: break-word;\"><span style=\"word-break: break-word;\"><span style=\"word-break: break-word; color: #ffffff;\">GET READY FOR&nbsp;<br></span><span style=\"word-break: break-word; color: #ffffff;\">THE BIG GAME!</span></span></p>",
+      "replace": "<p style=\"margin: 0; word-break: break-word;\"><span style=\"word-break: break-word;\"><span style=\"word-break: break-word; color: #ffffff;\">MONTHLY&nbsp;<br></span><span style=\"word-break: break-word; color: #ffffff;\">NEWSLETTER</span></span></p>"
+    },
+    {
+      "find": "<div style=\"max-width: 136px;\"><img src=\"images/2_your_pub_logo.png\"",
+      "replace": "<div style=\"max-width: 200px;\"><a href=\"https://example.com\" target=\"_blank\"><img src=\"@asset:your-logo.png\""
+    }
+  ]
+}

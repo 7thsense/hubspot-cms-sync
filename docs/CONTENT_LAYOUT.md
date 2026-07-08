@@ -32,6 +32,14 @@ my-site/
 |       |-- container.json
 |       `-- posts/
 |           `-- blog__hello-world.json
+|-- imports/
+|   `-- beefree/
+|       `-- <campaign-key>/
+|           |-- source.index.html
+|           |-- customized.index.html
+|           |-- content.spec.json
+|           |-- import.meta.json
+|           `-- source.zip
 |-- email-templates/
 |   `-- monthly-roundup.html
 |-- templates/
