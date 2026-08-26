@@ -22,6 +22,12 @@ git diff --stat
 git diff
 ```
 
+`hcms pull` scans the tree it just wrote and **fails** if any adapter left a raw portal
+id, hosted URL or numeric content id behind — the canonical store has to stay
+account-independent for push to resolve it into another portal. Fix the projection
+rather than committing the result. `HCMS_ALLOW_NONPORTABLE_PULL=1` downgrades it to a
+warning for migrations only; the standalone `hcms corpus` run above is the same check.
+
 Summarize changed files, content objects, and any verification that could not be
 run.
 

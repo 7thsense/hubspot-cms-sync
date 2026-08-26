@@ -768,3 +768,43 @@ test('push PROCEEDS past a satisfied preflight to the adapter loop (no offenders
   assert.equal(anyAdapterPushed, true, 'a satisfied preflight must let the adapter loop run');
   assert.equal(res.account, 'dev');
 });
+
+// ---------------------------------------------------------------------------
+// PORTABILITY GATE (0.26.3). A pull that writes account state into the canonical
+// tree used to succeed silently; the leak then surfaced at the next CI corpus gate,
+// arbitrarily far from the pull that caused it. pull() now scans what it wrote and
+// fails closed, so the person who pulled is the person who sees it.
+// ---------------------------------------------------------------------------
+
+test('pull FAILS when the tree it just wrote carries non-portable values', async () => {
+  const { deps } = makeOrchestratorEnv();
+  const findings = [
+    { file: 'emails/sample.json', line: 37, rule: 'portal-id', match: '246389711' },
+    { file: 'emails/sample.json', line: 42, rule: 'numeric-content-id', match: '"id": "366522967781"' },
+  ];
+  await assert.rejects(
+    () => pull('dev', { ...deps, corpusScan: () => ({ findings, scanned: 188 }) }),
+    /2 non-portable value\(s\) into the canonical tree/,
+  );
+});
+
+test('pull SUCCEEDS and reports a clean corpus when the tree is portable', async () => {
+  const { deps } = makeOrchestratorEnv();
+  const res = await pull('dev', { ...deps, corpusScan: () => ({ findings: [], scanned: 188 }) });
+  assert.equal(res.corpus.findings.length, 0);
+  assert.equal(res.corpus.scanned, 188);
+});
+
+test('HCMS_ALLOW_NONPORTABLE_PULL=1 downgrades the gate to a warning', async () => {
+  const { deps } = makeOrchestratorEnv();
+  const prev = process.env.HCMS_ALLOW_NONPORTABLE_PULL;
+  process.env.HCMS_ALLOW_NONPORTABLE_PULL = '1';
+  try {
+    const findings = [{ file: 'emails/x.json', line: 1, rule: 'portal-id', match: '246389711' }];
+    const res = await pull('dev', { ...deps, corpusScan: () => ({ findings, scanned: 1 }) });
+    assert.equal(res.corpus.findings.length, 1, 'findings still reported, pull not aborted');
+  } finally {
+    if (prev === undefined) delete process.env.HCMS_ALLOW_NONPORTABLE_PULL;
+    else process.env.HCMS_ALLOW_NONPORTABLE_PULL = prev;
+  }
+});

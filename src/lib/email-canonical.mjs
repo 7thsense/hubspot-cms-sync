@@ -1,8 +1,9 @@
 // sync/lib/email-canonical.mjs — portable marketing-email projection (pure).
 //
 // Projects HubSpot /marketing/v3/emails objects into git-committable JSON:
-// logical key, portable fields, unsupported.readOnly audit bucket, and
-// pushBlockedReasons populated at pull time.
+// logical key, portable fields, and pushBlockedReasons populated at pull time.
+// Portal-assigned identity is dropped rather than echoed back into git — see
+// hasListTargeting() below for the one bit of account state that survives, and why.
 
 import { stableStringify } from './canonical.mjs';
 import { canonicalize as canonicalizeRefs, resolve as resolveRefs } from './refs.mjs';
@@ -26,28 +27,6 @@ export const EMAIL_SIDECAR_FILES = new Set([
 ]);
 
 export const EMAIL_NON_CAMPAIGN_DIRS = new Set(['blocks', 'campaigns']);
-
-const READ_ONLY_KEYS = [
-  'to',
-  'activeDomain',
-  'businessUnitId',
-  'previewKey',
-  'subscriptionDetails',
-  'createdById',
-  'updatedById',
-  'createdAt',
-  'updatedAt',
-  'publishDate',
-  'isAb',
-  'isPublished',
-  'isTransactional',
-  'sendOnPublish',
-  'id',
-  'archived',
-  'stats',
-  'folderId',
-  'folderIdV2',
-];
 
 const isMeaningful = (v) => {
   if (v == null) return false;
@@ -119,20 +98,22 @@ export function resolveTemplateMapping(templatePaths, mappingKey) {
   };
 }
 
-function collectReadOnly(raw) {
-  const readOnly = {};
-  for (const k of READ_ONLY_KEYS) {
-    if (isMeaningful(raw?.[k])) readOnly[k] = raw[k];
-  }
-  if (isMeaningful(raw?.webversion)) {
-    readOnly.webversion = {
-      enabled: raw.webversion.enabled,
-      domain: raw.webversion.domain,
-      slug: raw.webversion.slug,
-      isPageRedirected: raw.webversion.isPageRedirected,
-    };
-  }
-  return Object.keys(readOnly).length > 0 ? readOnly : null;
+// The canonical store holds PORTABLE content only. Portal-assigned identity — the
+// email id, activeDomain, previewKey, subscriptionDetails, created/updatedById, the
+// webversion domain/slug — is account state, not content: it cannot be pushed, cannot
+// be resolved into another portal, and committing it puts a literal portal id in the
+// tree that `corpus-scan` rejects (and that leaks sandbox preview keys into git).
+// Numeric ids live in the gitignored registry; everything else is simply dropped.
+//
+// One bit of that state IS load-bearing, so it is projected as a portable boolean
+// instead of a raw echo: whether the source email targets specific lists/segments.
+// `computePushBlockedReasons` uses it to refuse pushing a copy that would send to the
+// wrong audience. Deliberately conservative — ANY meaningful `to` counts, matching the
+// pre-0.26.3 behaviour when this was read off `unsupported.readOnly.to`. Under-blocking
+// here means a mis-targeted send, so this must never become the more precise
+// "are the include/exclude arrays actually non-empty" test without a lot of care.
+function hasListTargeting(raw) {
+  return isMeaningful(raw?.to);
 }
 
 function deepClone(v) {
@@ -237,7 +218,10 @@ export function computePushBlockedReasons(canon, {
   if (canon.type === 'AUTOMATED_EMAIL' && !pushableDraft && ds !== 'unsupportedAutomated') {
     reasons.push('AUTOMATED_EMAIL workflow state is not recreated by push (mark draft/workflow or pullOnly)');
   }
-  if (canon.unsupported?.readOnly?.to && !pushableDraft) {
+  // `hasListTargeting` since 0.26.3; `unsupported.readOnly.to` is the pre-0.26.3 shape,
+  // still honoured so a tree pulled by an older version keeps gating until it is repulled.
+  const targetsLists = canon.hasListTargeting === true || Boolean(canon.unsupported?.readOnly?.to);
+  if (targetsLists && !pushableDraft) {
     reasons.push('list/segment targeting (to) is read-only in v1');
   }
   return reasons;
@@ -395,7 +379,6 @@ export function canonicalEmail(raw, opts = {}) {
     ctaInventory, ctaPolicy, notes, unresolvedCtas,
   });
 
-  const readOnly = collectReadOnly(raw);
   const canon = {
     key: forcedKey ?? emailKeyForName(raw?.name),
     name: String(raw?.name ?? ''),
@@ -423,7 +406,7 @@ export function canonicalEmail(raw, opts = {}) {
   };
 
   if (mappingKey) canon.templateMappingKey = mappingKey;
-  if (readOnly) canon.unsupported = { readOnly };
+  if (hasListTargeting(raw)) canon.hasListTargeting = true;
 
   const pushBlockedReasons = computePushBlockedReasons(canon, {
     templatePaths,

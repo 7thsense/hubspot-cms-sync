@@ -29,6 +29,8 @@
 // Each exported transform documents exactly which fields it touches.
 // ─────────────────────────────────────────────────────────────────────────
 
+import { scanText } from '../corpus-scan.mjs';
+
 // Keys that are per-account or volatile and must NEVER land in a committed
 // canonical file. Matched by exact name. *At / *ById are matched by suffix
 // (see SUFFIX_AT / SUFFIX_BY_ID below) so new timestamp variants
@@ -78,6 +80,52 @@ function isVolatileKey(key, extra) {
  */
 export function stableStringify(obj) {
   return JSON.stringify(sortKeysDeep(obj), null, 2) + '\n';
+}
+
+/**
+ * assertPortableCanonical(obj, label) -> string (the bytes to write)
+ *
+ * stableStringify, with the portability invariant enforced before the bytes escape.
+ * Stays pure per this module's contract: it serializes and throws, the ADAPTER writes
+ * — so a throw means the caller never had bytes to write in the first place.
+ *
+ * The canonical store is only useful if it is account-independent: pull tokenizes
+ * per-account refs into `@logical` tokens, push resolves them against the TARGET
+ * account. A projection that quietly echoes a raw portal id, hosted URL or numeric
+ * content id back into the tree breaks that contract — and, because nothing reads it
+ * back, breaks it SILENTLY. The failure then surfaces at the next `corpus` gate,
+ * arbitrarily far from the pull that caused it (in the worst case, at a production
+ * release, against an immutable tag).
+ *
+ * So the same scanner that gates CI runs here, on the exact bytes about to be
+ * written, and the offending file never reaches disk. Fails per-file: earlier files
+ * in the pull are already valid.
+ *
+ * Use for every write into the COMMITTED canonical tree. Do NOT use for per-account
+ * artifacts that are supposed to carry real ids — `.sync-state/<portal>.registry.json`,
+ * rehost maps, inventory dumps — those are gitignored by design.
+ *
+ * @param {object} obj canonical object to serialize
+ * @param {string} [label] path or name used in the error message
+ * @returns {string} the serialized bytes, safe to write
+ * @throws {Error} if the serialized form contains non-portable values
+ */
+export function assertPortableCanonical(obj, label = '<canonical>') {
+  const text = stableStringify(obj);
+  const findings = scanText(text, label);
+  if (findings.length > 0) {
+    const detail = findings
+      .slice(0, 10)
+      .map((f) => `  L${f.line}  ${f.rule}: ${f.match}`)
+      .join('\n');
+    const more = findings.length > 10 ? `\n  …and ${findings.length - 10} more` : '';
+    throw new Error(
+      `refusing to write non-portable canonical file ${label} — ` +
+        `${findings.length} value(s) that no target account can resolve:\n${detail}${more}\n` +
+        'The projection for this content type is echoing account state it should drop or tokenize.',
+    );
+  }
+  return text;
 }
 
 // Recursively return a structurally-equal value with all object keys sorted.
