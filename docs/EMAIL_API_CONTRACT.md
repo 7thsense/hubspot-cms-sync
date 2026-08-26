@@ -104,8 +104,24 @@ Per-email JSON (abbreviated):
 **`pushBlockedReasons`:** unverified template mapping, unresolved CTA, etc. Push
 fails closed when non-empty.
 
-**`unsupported.readOnly`:** `to`, `subscriptionDetails`, `previewKey`, timestamps,
-and other portal-assigned fields — preserved on pull, never pushed.
+**Portal-assigned state is DROPPED, not echoed.** The email `id`, `activeDomain`,
+`previewKey`, `subscriptionDetails`, `created/updatedById` and the webversion
+`domain`/`slug` belong to one account: they cannot be pushed, cannot be resolved into
+another portal, and committing them puts a literal portal id in the tree that
+`hcms corpus` rejects. Numeric ids live in the gitignored registry; the rest is dropped.
+The one portable field, `subscriptionDetails.subscriptionName`, is promoted to the
+top-level `subscriptionName`.
+
+**`hasListTargeting`** (boolean, omitted when false) is the one bit of that state kept,
+as a portable flag: the source email targets specific lists/segments, which push cannot
+reproduce, so `pushBlockedReasons` refuses to push a copy that would send to the wrong
+audience. Deliberately conservative — any meaningful `to` sets it.
+
+> **Removed in 0.26.3:** the `unsupported.readOnly` bucket. `computePushBlockedReasons`
+> still honours `unsupported.readOnly.to` so a tree pulled by an older version keeps
+> gating, but a repull drops the block. This is not the same thing as the **forms**
+> adapter's `unsupported`, which is a real record of config the sync cannot reproduce
+> and is still written.
 
 ## Registry
 

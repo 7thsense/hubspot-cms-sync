@@ -9,7 +9,7 @@ import * as nodeFs from 'node:fs';
 import { join } from 'node:path';
 
 import { hub as defaultHub } from '../lib/hub.mjs';
-import { stableStringify } from '../lib/canonical.mjs';
+import { stableStringify, assertPortableCanonical } from '../lib/canonical.mjs';
 import { loadInventory } from '../cta-inventory.mjs';
 import { campaignFileCandidates } from '../lib/email-blocks.mjs';
 import { pushEmailEntries, isWorkflowEmail, effectiveEmailTemplatePath, isCommittedEmailTemplatePath } from '../lib/email-manifest.mjs';
@@ -170,7 +170,12 @@ export async function pull(acct, ctx) {
       manifestEntry,
     });
 
-    nodeFs.writeFileSync(join(dir, `${key}.json`), stableStringify(canon));
+    // Fails closed rather than committing account state the projection should have
+    // dropped — the invariant is enforced here, not left to the next CI corpus gate.
+    nodeFs.writeFileSync(
+      join(dir, `${key}.json`),
+      assertPortableCanonical(canon, `content/emails/${key}.json`),
+    );
     populateEmailRegistry(registry, [{ key, id: raw.id }]);
     pulled += 1;
 

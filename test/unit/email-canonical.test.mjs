@@ -20,6 +20,7 @@ import {
   populateEmailRegistry,
 } from '../../src/lib/email-canonical.mjs';
 import { emptyRegistry, saveRegistry, loadRegistry } from '../../src/lib/refs.mjs';
+import { assertPortableCanonical } from '../../src/lib/canonical.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIX = join(__dirname, '..', 'fixtures', 'emails');
@@ -53,16 +54,54 @@ test('assignEmailKeys disambiguates collisions', () => {
   assert.ok(assigned[1].collisionNote);
 });
 
-test('canonicalEmail strips read-only fields and sets pushBlockedReasons', () => {
+test('canonicalEmail drops portal-assigned state and sets pushBlockedReasons', () => {
   const raw = loadFixture('raw-simple-draft.json');
   const registry = emptyRegistry('529456');
   const { canon } = canonicalEmail(raw, { registry });
   assert.equal(canon.key, 'sample-how-to-send-your-first-email-with-hubspot');
   assert.equal(canon.templateMappingKey, 'generated-2780957793');
-  assert.ok(canon.unsupported?.readOnly?.to);
-  assert.ok(canon.unsupported?.readOnly?.subscriptionDetails);
-  assert.ok(!('id' in canon));
+  // The one bit of `to` that matters survives as a portable boolean...
+  assert.equal(canon.hasListTargeting, true);
   assert.ok(canon.pushBlockedReasons?.length > 0);
+  // ...and nothing else from the source account comes with it.
+  assert.ok(!('unsupported' in canon), 'no readOnly audit bucket');
+  for (const k of ['id', 'activeDomain', 'previewKey', 'subscriptionDetails',
+                   'createdById', 'updatedById', 'to']) {
+    assert.ok(!(k in canon), `canonical email must not carry ${k}`);
+  }
+  assert.equal(canon.subscriptionName, raw.subscriptionDetails.subscriptionName,
+    'the one portable field from subscriptionDetails is promoted to top level');
+});
+
+test('canonicalEmail projection is portable — no portal id survives serialization', () => {
+  const raw = loadFixture('raw-simple-draft.json');
+  const { canon } = canonicalEmail(raw, { registry: emptyRegistry('529456') });
+  // The real regression guard: whatever the projection decides to keep, the bytes it
+  // writes must survive the same scanner that gates CI. This is what a v0.26.2 tree
+  // failed, days later, at a production release.
+  assert.doesNotThrow(() => assertPortableCanonical(canon, 'content/emails/sample.json'));
+});
+
+test('assertPortableCanonical refuses bytes carrying a raw portal id', () => {
+  assert.throws(
+    () => assertPortableCanonical({ key: 'x', activeDomain: '246389711.hs-sites-na2.com' }, 'x.json'),
+    /non-portable canonical file x\.json[\s\S]*portal-id: 246389711/,
+  );
+});
+
+test('computePushBlockedReasons still honours the pre-0.26.3 readOnly.to shape', () => {
+  // A tree pulled by an older version keeps gating until it is repulled.
+  const legacy = {
+    key: 'legacy',
+    name: 'Legacy',
+    content: { templatePath: '@hubspot/email/dnd/Start_from_scratch.html', widgets: {} },
+    unsupported: { readOnly: { to: { contactLists: { include: [1] } } } },
+  };
+  const reasons = computePushBlockedReasons(legacy, {
+    manifestEntry: { desiredState: 'pullOnly' },
+    templatePaths: {},
+  });
+  assert.ok(reasons.some((r) => r.includes('list/segment targeting')));
 });
 
 test('committed email template shell skips template-paths.json verification', () => {
@@ -87,7 +126,7 @@ test('draftCopy skips read-only to blocker and native @hubspot template mapping'
     type: 'AUTOMATED_EMAIL',
     templateMappingKey: 'hubspot-start-from-scratch',
     content: { templatePath: '@hubspot/email/dnd/Start_from_scratch.html', widgets: {} },
-    unsupported: { readOnly: { to: { contactLists: { include: [1] } } } },
+    hasListTargeting: true,
   };
   const reasons = computePushBlockedReasons(canon, {
     manifestEntry: { desiredState: 'draftCopy' },

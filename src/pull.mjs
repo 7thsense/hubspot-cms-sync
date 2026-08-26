@@ -17,7 +17,10 @@
 // PRODUCTION (portal 529456) is the canonical SOURCE — pulling FROM prod is allowed and
 // expected. The read-only guard lives in push.mjs (never write to prod).
 
+import { join } from 'node:path';
+
 import { account as realAccount } from './lib/hub.mjs';
+import { scan as realCorpusScan, DEFAULT_DIRS } from './corpus-scan.mjs';
 import { loadAdapters as realLoadAdapters, topoSort } from './lib/orchestrate.mjs';
 import {
   contentDir,
@@ -35,6 +38,7 @@ export async function pull(name, deps = {}) {
     loadAdapters = realLoadAdapters,
     loadAccountRegistry = realLoadAccountRegistry,
     persistAccountRegistry = realPersistAccountRegistry,
+    corpusScan = realCorpusScan,
     config,
   } = deps;
 
@@ -81,7 +85,35 @@ export async function pull(name, deps = {}) {
   }
   console.log(`Registry persisted to .sync-state/${acct.portalId}.registry.json`);
 
-  return { account: acct.name, portalId: acct.portalId, order, summary };
+  // PORTABILITY GATE. Adapters that use assertPortableCanonical() refuse to write a
+  // non-portable file in the first place; this is the catch-all behind them, covering
+  // every adapter and every file shape (markdown posts, HubL templates, JS) in one
+  // place. It runs AFTER the writes, so it is a detector, not a preventer: it exists
+  // so a leak is discovered by the person who just pulled, in the pull that caused it,
+  // instead of days later at a release gate against an immutable tag.
+  const root = config?.root || process.cwd();
+  const { findings, scanned } = corpusScan(DEFAULT_DIRS.map((d) => join(root, d)));
+  if (findings.length > 0) {
+    const byRule = new Map();
+    for (const f of findings) byRule.set(f.rule, (byRule.get(f.rule) || 0) + 1);
+    const files = [...new Set(findings.map((f) => f.file))];
+    console.error(
+      `\n✖ corpus: ${findings.length} non-portable value(s) in ${files.length} file(s) ` +
+        `(${scanned} scanned) — the pulled tree is NOT safe to commit.`,
+    );
+    for (const f of findings.slice(0, 20)) console.error(`    ${f.file}:${f.line}  ${f.rule}: ${f.match}`);
+    if (findings.length > 20) console.error(`    …and ${findings.length - 20} more`);
+    console.error('  by rule: ' + [...byRule].map(([r, n]) => `${r}=${n}`).join(', '));
+    console.error('  Run `hcms corpus` for the full report. Set HCMS_ALLOW_NONPORTABLE_PULL=1 to');
+    console.error('  downgrade this to a warning (migrations only — do not commit the result).\n');
+    if (process.env.HCMS_ALLOW_NONPORTABLE_PULL !== '1') {
+      throw new Error(`pull wrote ${findings.length} non-portable value(s) into the canonical tree`);
+    }
+  } else {
+    console.log(`corpus: clean — ${scanned} file(s) scanned, 0 non-portable values`);
+  }
+
+  return { account: acct.name, portalId: acct.portalId, order, summary, corpus: { findings, scanned } };
 }
 
 // CLI entry.
