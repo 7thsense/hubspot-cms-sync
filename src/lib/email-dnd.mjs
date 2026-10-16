@@ -1,6 +1,7 @@
 // sync/lib/email-dnd.mjs — DnD email widget normalization + shell layout (pure).
 
 import { join } from 'node:path';
+import { fetchWithRetry } from './hub.mjs';
 
 import {
   effectiveEmailTemplatePath,
@@ -397,6 +398,8 @@ export async function committedEmailTemplateExists(acct, manifestPath, themeName
   if (!String(manifestPath).startsWith(prefix)) return false;
   const rel = manifestPath.slice(prefix.length);
   const url = `${HUB_API}/cms/v3/source-code/published/content/${themeName}/${rel}`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${acct.key}` } });
+  // Retried on 429/5xx: a transient failure here would otherwise read as "template
+  // missing" and change which template the email is pushed against.
+  const res = await fetchWithRetry(url, { headers: { Authorization: `Bearer ${acct.key}` } });
   return res.ok;
 }

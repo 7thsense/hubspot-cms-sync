@@ -50,7 +50,7 @@ import {
 import { join, resolve as resolvePath, basename, extname } from 'node:path';
 import { createHash } from 'node:crypto';
 
-import { hub, getAll } from '../lib/hub.mjs';
+import { hub, getAll, fetchWithRetry } from '../lib/hub.mjs';
 import { stableStringify } from '../lib/canonical.mjs';
 import { wireToFile, fileToWire } from '../lib/posts-format.mjs';
 import { resolve as resolveRefs, canonicalize as canonicalizeRefs } from '../lib/refs.mjs';
@@ -876,27 +876,32 @@ function loadAssetManifest(dir) {
 }
 
 // Upload one local file to the target File Manager; return its hosted URL.
-// overwrite:true + EXACT_FOLDER converges (no -1 duplicates — codex #4).
+// overwrite:true + EXACT_FOLDER converges (no -1 duplicates — codex #4), which is also
+// what makes this POST retry-safe: a repeat after a 5xx overwrites the same path with
+// the same bytes. FormData is single-use, so it is rebuilt per attempt.
 async function uploadAsset(acct, path, fileName) {
   const buf = readFileSync(path);
-  const form = new FormData();
-  form.append('file', new Blob([buf]), fileName);
-  form.append('fileName', fileName);
-  form.append('folderPath', '/blog-migrated');
-  form.append(
-    'options',
-    JSON.stringify({
-      access: 'PUBLIC_INDEXABLE',
-      overwrite: true,
-      duplicateValidationStrategy: 'NONE',
-      duplicateValidationScope: 'EXACT_FOLDER',
-    }),
-  );
-  const res = await fetch(`${API}/files/v3/files`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${acct.key}` },
-    body: form,
-  });
+  const makeInit = () => {
+    const form = new FormData();
+    form.append('file', new Blob([buf]), fileName);
+    form.append('fileName', fileName);
+    form.append('folderPath', '/blog-migrated');
+    form.append(
+      'options',
+      JSON.stringify({
+        access: 'PUBLIC_INDEXABLE',
+        overwrite: true,
+        duplicateValidationStrategy: 'NONE',
+        duplicateValidationScope: 'EXACT_FOLDER',
+      }),
+    );
+    return {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${acct.key}` },
+      body: form,
+    };
+  };
+  const res = await fetchWithRetry(`${API}/files/v3/files`, makeInit, { retrySafe: true });
   const j = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`upload ${fileName} -> ${res.status}: ${j.message || ''}`);
   return j.url || j.objects?.[0]?.url;

@@ -4,9 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { account as resolveAccount } from './lib/hub.mjs';
-
-const API = 'https://api.hubapi.com';
+import { account as resolveAccount, hub as hubRequest, getAll as hubGetAll } from './lib/hub.mjs';
 
 function future() {
   return new Date(Date.now() + 90_000).toISOString().replace(/\.\d+Z$/, '.000Z');
@@ -50,25 +48,24 @@ async function republish(argv = process.argv.slice(2), opts = {}) {
   }
   key ||= keyForPortal(portal, config);
 
+  // Per-request retry of transient 429/5xx comes from lib/hub.mjs. schedule and
+  // draft/push-live are retry-safe (repeating one converges on the same end state), so
+  // a one-off 500 on one of ~90 posts no longer fails the whole run. opts.sleep is a
+  // test seam for the backoff.
+  const acct = { key };
+  const hubOpts = opts.sleep ? { sleep: opts.sleep } : {};
   async function hub(method, path, body) {
-    const r = await fetch(API + path, {
-      method,
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: body && JSON.stringify(body),
-    });
-    return { ok: r.ok, status: r.status, j: await r.json().catch(() => ({})) };
+    try {
+      return await hubRequest(acct, method, path, body, hubOpts);
+    } catch (e) {
+      // Network failure that survived every retry: count it against this item rather
+      // than aborting the rest of the run.
+      return { ok: false, status: `network error (${e.code || e.message})`, json: {} };
+    }
   }
-  async function getAll(path) {
-    const out = [];
-    let after;
-    do {
-      const sep = path.includes('?') ? '&' : '?';
-      const { j } = await hub('GET', `${path}${sep}limit=100${after ? `&after=${after}` : ''}`);
-      out.push(...(j.results || []));
-      after = j.paging?.next?.after;
-    } while (after);
-    return out;
-  }
+  // Listing failures throw (after retries) instead of yielding a short list: a silently
+  // partial listing would republish fewer pages and still exit 0.
+  const getAll = (path) => hubGetAll(acct, path, hubOpts);
 
   const fut = future();
   let ok = 0;

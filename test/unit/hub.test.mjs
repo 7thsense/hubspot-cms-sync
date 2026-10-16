@@ -14,6 +14,10 @@ import {
   account,
   getAll,
   hub,
+  fetchWithRetry,
+  isRetrySafe,
+  retryDelayMs,
+  HUB_MAX_ATTEMPTS,
   matchPageSlug,
   matchBlogSlug,
   resolvePageBySlug,
@@ -228,6 +232,155 @@ test('hub retries a network throw then succeeds', async () => {
   } finally {
     globalThis.fetch = orig;
   }
+});
+
+// ---------- retry policy: what may be repeated, and how long to wait ----------
+
+// Scripted fetch: each call takes the next step ({ status, headers } or { throws }); the
+// last step repeats. Records every call.
+function scriptedFetch(steps) {
+  const seen = [];
+  const fn = async (url, init = {}) => {
+    const step = steps[Math.min(seen.length, steps.length - 1)];
+    seen.push({ url, method: init.method || 'GET', init });
+    if (step.throws) throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+    const headers = step.headers || {};
+    return {
+      ok: step.status >= 200 && step.status < 300,
+      status: step.status,
+      headers: { get: (h) => headers[h.toLowerCase()] ?? null },
+      text: async () => '',
+    };
+  };
+  fn.seen = seen;
+  return fn;
+}
+const acctK = { key: 'k' };
+const quiet = { onRetry: () => {} };
+
+async function withFetch(fake, fn) {
+  const orig = globalThis.fetch;
+  globalThis.fetch = fake;
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = orig;
+  }
+}
+
+test('hub: a 500 then a 204 on push-live succeeds after one backoff', async () => {
+  const f = scriptedFetch([{ status: 500 }, { status: 204 }]);
+  const sleeps = [];
+  const r = await withFetch(f, () =>
+    hub(acctK, 'POST', '/cms/v3/blogs/posts/9/draft/push-live', {}, { ...quiet, sleep: async (ms) => sleeps.push(ms) }));
+  assert.equal(r.status, 204);
+  assert.equal(r.ok, true);
+  assert.equal(f.seen.length, 2);
+  assert.deepEqual(sleeps, [500]);
+});
+
+test('hub: a persistent 500 on schedule fails after HUB_MAX_ATTEMPTS with bounded backoff', async () => {
+  const f = scriptedFetch([{ status: 500 }]);
+  const sleeps = [];
+  const r = await withFetch(f, () =>
+    hub(acctK, 'POST', '/cms/v3/pages/site-pages/schedule', { id: '1' }, { ...quiet, sleep: async (ms) => sleeps.push(ms) }));
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 500);
+  assert.equal(f.seen.length, HUB_MAX_ATTEMPTS);
+  assert.deepEqual(sleeps, [500, 1000, 2000, 4000]);
+});
+
+test('hub: a 429 waits for Retry-After (seconds) before retrying', async () => {
+  const f = scriptedFetch([{ status: 429, headers: { 'retry-after': '2' } }, { status: 200 }]);
+  const sleeps = [];
+  const r = await withFetch(f, () => hub(acctK, 'GET', '/x', undefined, { ...quiet, sleep: async (ms) => sleeps.push(ms) }));
+  assert.equal(r.ok, true);
+  assert.deepEqual(sleeps, [2000]);
+});
+
+test('hub: a POST create is NOT retried on 5xx — a 500 may already have created it', async () => {
+  for (const path of ['/cms/v3/blogs/posts', '/marketing/v3/emails', '/cms/v3/url-redirects', '/forms/v2/forms']) {
+    const f = scriptedFetch([{ status: 500 }, { status: 201 }]);
+    const r = await withFetch(f, () => hub(acctK, 'POST', path, {}, { ...quiet, sleep: async () => {} }));
+    assert.equal(r.status, 500, `${path} must surface the 500`);
+    assert.equal(f.seen.length, 1, `${path} must be sent exactly once`);
+  }
+});
+
+test('hub: a POST create network error is rethrown immediately, not resent', async () => {
+  const f = scriptedFetch([{ throws: true }, { status: 201 }]);
+  await withFetch(f, () =>
+    assert.rejects(hub(acctK, 'POST', '/cms/v3/blogs/posts', {}, { ...quiet, sleep: async () => {} }), /socket hang up/));
+  assert.equal(f.seen.length, 1);
+});
+
+test('hub: a POST create IS retried on 429 — HubSpot rejected it unprocessed', async () => {
+  const f = scriptedFetch([{ status: 429 }, { status: 201 }]);
+  const r = await withFetch(f, () => hub(acctK, 'POST', '/cms/v3/blogs/posts', {}, { ...quiet, sleep: async () => {} }));
+  assert.equal(r.status, 201);
+  assert.equal(f.seen.length, 2);
+});
+
+test('isRetrySafe: reads and converge-to-one-state actions only', () => {
+  const safe = [
+    ['GET', '/cms/v3/pages/site-pages?limit=100'],
+    ['PATCH', '/cms/v3/pages/site-pages/1/draft'],
+    ['PUT', '/forms/v2/forms/abc'],
+    ['DELETE', '/cms/v3/url-redirects/1'],
+    ['POST', '/cms/v3/pages/site-pages/schedule'],
+    ['POST', '/cms/v3/blogs/posts/schedule'],
+    ['POST', '/cms/v3/blogs/posts/9/draft/push-live'],
+    ['post', '/cms/v3/blogs/posts/9/draft/push-live?x=1'],
+    ['POST', '/crm/v3/objects/contacts/search'],
+    ['POST', '/cms/v3/pages/site-pages/batch/read'],
+  ];
+  const unsafe = [
+    ['POST', '/cms/v3/blogs/posts'],
+    ['POST', '/cms/v3/pages/site-pages'],
+    ['POST', '/marketing/v3/emails'],
+    ['POST', '/cms/v3/url-redirects'],
+    ['POST', '/cms/v3/blogs/tags'],
+    ['POST', '/crm/v3/properties/contacts'],
+    ['POST', '/cms/v3/pages/site-pages/schedule/extra'],
+  ];
+  for (const [m, p] of safe) assert.equal(isRetrySafe(m, p), true, `${m} ${p}`);
+  for (const [m, p] of unsafe) assert.equal(isRetrySafe(m, p), false, `${m} ${p}`);
+});
+
+test('retryDelayMs: exponential with a cap; Retry-After seconds or HTTP-date wins, capped at 30s', () => {
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 9].map((a) => retryDelayMs(a, null)), [500, 1000, 2000, 4000, 8000, 8000, 8000]);
+  assert.equal(retryDelayMs(1, '7'), 7000);
+  assert.equal(retryDelayMs(1, '0'), 0);
+  assert.equal(retryDelayMs(1, '600'), 30000);
+  const now = Date.parse('2026-10-16T12:00:00Z');
+  assert.equal(retryDelayMs(1, 'Fri, 16 Oct 2026 12:00:04 GMT', now), 4000);
+  assert.equal(retryDelayMs(1, 'Fri, 16 Oct 2026 11:59:00 GMT', now), 0, 'a past date means retry now');
+  assert.equal(retryDelayMs(2, 'garbage'), 1000, 'unparseable header falls back to backoff');
+});
+
+test('fetchWithRetry rebuilds a factory init per attempt (single-use FormData bodies)', async () => {
+  const f = scriptedFetch([{ status: 502 }, { status: 502 }, { status: 200 }]);
+  let built = 0;
+  const res = await fetchWithRetry(
+    'https://api.hubapi.com/files/v3/files',
+    () => ({ method: 'POST', body: `form-${++built}` }),
+    { retrySafe: true, fetchImpl: f, sleep: async () => {}, ...quiet },
+  );
+  assert.equal(res.status, 200);
+  assert.equal(built, 3);
+  assert.deepEqual(f.seen.map((c) => c.init.body), ['form-1', 'form-2', 'form-3']);
+});
+
+test('fetchWithRetry reports each retry with the request, status and delay', async () => {
+  const f = scriptedFetch([{ status: 503 }, { status: 200 }]);
+  const events = [];
+  await fetchWithRetry('https://api.hubapi.com/cms/v3/pages/site-pages?limit=100', {}, {
+    fetchImpl: f, sleep: async () => {}, onRetry: (e) => events.push(e),
+  });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].label, 'GET /cms/v3/pages/site-pages');
+  assert.equal(events[0].status, 503);
+  assert.equal(events[0].delayMs, 500);
 });
 
 // ---------- pure slug matchers ----------
