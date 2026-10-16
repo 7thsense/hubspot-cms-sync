@@ -81,70 +81,150 @@ export function account(name, cfg = fallbackConfig()) {
   return { name, portalId, key };
 }
 
+// Transient HubSpot failures — gateway 5xx (the 502/503/504 HTML error pages CloudFront
+// returns under load, and the odd one-off 500) and 429 rate limits — are retried per
+// request with bounded exponential backoff, so one flaky response can't abort a whole
+// push or republish mid-stream. 4xx (real errors) are never retried.
+//
+// Retrying is only safe when repeating the request cannot duplicate its effect, because
+// a 5xx or a dropped connection does not prove the server did nothing:
+//   - 429 is always retried: HubSpot rejected the request before processing it.
+//   - 5xx and network throws are retried only for idempotent-safe requests
+//     (isRetrySafe): reads, PUT/PATCH/DELETE (set-to-value / remove), and the POST
+//     actions that converge on one end state (schedule, draft/push-live, batch reads,
+//     search). A POST create is NOT retried — a 500 that actually created the object
+//     would otherwise be repeated into a duplicate page, post, email or redirect.
+export const HUB_MAX_ATTEMPTS = 5;
+const RETRY_AFTER_CAP_MS = 30_000;
+const BACKOFF_BASE_MS = 500;
+const BACKOFF_CAP_MS = 8_000;
+
+export const isTransientStatus = (s) => s === 429 || (s >= 500 && s <= 599);
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'PATCH', 'DELETE']);
+const SAFE_POST_PATHS = [/\/schedule$/, /\/draft\/push-live$/, /\/batch\/read$/, /\/search$/];
+
+/**
+ * Pure: may this request be repeated after a 5xx / network failure without risking a
+ * duplicate side effect? POST is safe only for the allowlisted converge-to-one-state
+ * actions; every other POST is treated as a create.
+ * @param {string} method HTTP method
+ * @param {string} path API path (query string ignored)
+ * @returns {boolean}
+ */
+export function isRetrySafe(method, path) {
+  const m = String(method || 'GET').toUpperCase();
+  if (SAFE_METHODS.has(m)) return true;
+  if (m !== 'POST') return false;
+  const bare = String(path || '').split('?')[0];
+  return SAFE_POST_PATHS.some((re) => re.test(bare));
+}
+
+/**
+ * Pure: delay before retry number `attempt` (1-based). A Retry-After header (delta
+ * seconds or an HTTP-date) wins, capped at 30s; otherwise 0.5s, 1s, 2s, 4s, 8s (cap).
+ * @param {number} attempt the attempt that just failed (1-based)
+ * @param {string|null} [retryAfter] Retry-After header value
+ * @param {number} [now] epoch ms, for HTTP-date resolution
+ * @returns {number} milliseconds
+ */
+export function retryDelayMs(attempt, retryAfter, now = Date.now()) {
+  if (retryAfter != null && String(retryAfter).trim() !== '') {
+    const raw = String(retryAfter).trim();
+    let ms = /^\d+(\.\d+)?$/.test(raw) ? Number(raw) * 1000 : Date.parse(raw) - now;
+    if (Number.isFinite(ms)) return Math.min(Math.max(ms, 0), RETRY_AFTER_CAP_MS);
+  }
+  return Math.min(BACKOFF_BASE_MS * 2 ** (attempt - 1), BACKOFF_CAP_MS);
+}
+
+const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const defaultOnRetry = ({ label, attempt, maxAttempts, status, error, delayMs }) => {
+  const why = error ? `network error (${error.code || error.message})` : `HTTP ${status}`;
+  process.stderr.write(`hub: ${label} -> ${why}; retry ${attempt + 1}/${maxAttempts} in ${delayMs}ms\n`);
+};
+
+/**
+ * fetch() with per-request retry of transient failures (see the policy above).
+ * Returns the final Response — a still-transient status on the last attempt is
+ * returned, not thrown, so callers keep their own status handling. A network throw is
+ * rethrown once attempts are exhausted (or immediately when the request is not
+ * retry-safe).
+ * @param {string} url
+ * @param {object|(() => object)} init fetch init, or a factory for single-use bodies
+ *   (FormData) that must be rebuilt per attempt
+ * @param {{ retrySafe?: boolean, maxAttempts?: number, sleep?: Function,
+ *   fetchImpl?: Function, onRetry?: Function, label?: string }} [opts]
+ * @returns {Promise<Response>}
+ */
+export async function fetchWithRetry(url, init = {}, opts = {}) {
+  const maxAttempts = opts.maxAttempts ?? HUB_MAX_ATTEMPTS;
+  const sleep = opts.sleep ?? defaultSleep;
+  const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+  const onRetry = opts.onRetry ?? defaultOnRetry;
+  const makeInit = typeof init === 'function' ? init : () => init;
+  let attemptInit = makeInit();
+  const method = String(attemptInit.method || 'GET').toUpperCase();
+  const retrySafe = opts.retrySafe ?? isRetrySafe(method, new URL(url).pathname);
+  const label = opts.label ?? `${method} ${new URL(url).pathname}`;
+
+  for (let attempt = 1; ; attempt += 1) {
+    let res;
+    try {
+      if (attempt > 1) attemptInit = makeInit();
+      res = await fetchImpl(url, attemptInit);
+    } catch (error) {
+      if (!retrySafe || attempt >= maxAttempts) throw error;
+      const delayMs = retryDelayMs(attempt, null);
+      onRetry({ label, attempt, maxAttempts, error, delayMs });
+      await sleep(delayMs);
+      continue;
+    }
+    const retryable = res.status === 429 || (retrySafe && isTransientStatus(res.status));
+    if (!retryable || attempt >= maxAttempts) return res;
+    const delayMs = retryDelayMs(attempt, res.headers?.get?.('retry-after'));
+    onRetry({ label, attempt, maxAttempts, status: res.status, delayMs });
+    // Release the discarded response's connection before retrying.
+    await res.body?.cancel?.().catch(() => {});
+    await sleep(delayMs);
+  }
+}
+
 /**
  * Make an authenticated JSON request against the HubSpot API.
  * Never throws on a non-2xx status — returns { ok, status, json } so callers
  * decide how to react (some endpoints, e.g. slug lookups, treat 404 as "none").
+ * Transient failures are retried per fetchWithRetry; opts passes through to it.
  * @param {{ key: string }} acct account object from account()
  * @param {string} method HTTP method
  * @param {string} path API path beginning with '/'
  * @param {*} [body] optional JSON body
+ * @param {object} [opts] fetchWithRetry options (maxAttempts, sleep, retrySafe, …)
  * @returns {Promise<{ ok: boolean, status: number, json: any }>}
  */
-// Transient HubSpot failures — gateway 5xx (the 502/503/504 HTML error pages CloudFront
-// returns under load) and 429 rate limits — are retried with exponential backoff so a
-// single flaky response can't abort a whole push mid-stream. 4xx (real errors) are not
-// retried. Network-level throws (ECONNRESET/timeouts) are retried too.
-const HUB_MAX_ATTEMPTS = 5;
-const isTransientStatus = (s) => s === 429 || (s >= 500 && s <= 599);
-
 export async function hub(acct, method, path, body, opts = {}) {
   if (!acct || !acct.key) {
     throw new Error('hub() requires an account object with a key (from account()).');
   }
-  const maxAttempts = opts.maxAttempts ?? HUB_MAX_ATTEMPTS;
-  const sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
-  let lastErr;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    let res;
-    try {
-      res = await fetch(API + path, {
-        method,
-        headers: {
-          Authorization: `Bearer ${acct.key}`,
-          'Content-Type': 'application/json',
-        },
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-      });
-    } catch (e) {
-      // Network error — retry with backoff, then rethrow on the final attempt.
-      lastErr = e;
-      if (attempt >= maxAttempts) throw e;
-      await sleep(backoffMs(attempt, null));
-      continue;
-    }
-    const text = await res.text();
-    let json;
-    try {
-      json = text ? JSON.parse(text) : {};
-    } catch {
-      json = { raw: text };
-    }
-    if (isTransientStatus(res.status) && attempt < maxAttempts) {
-      await sleep(backoffMs(attempt, res.headers.get('retry-after')));
-      continue;
-    }
-    return { ok: res.ok, status: res.status, json };
+  const res = await fetchWithRetry(
+    API + path,
+    {
+      method,
+      headers: {
+        Authorization: `Bearer ${acct.key}`,
+        'Content-Type': 'application/json',
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    },
+    { retrySafe: isRetrySafe(method, path), label: `${method} ${path.split('?')[0]}`, ...opts },
+  );
+  const text = await res.text();
+  let json;
+  try {
+    json = text ? JSON.parse(text) : {};
+  } catch {
+    json = { raw: text };
   }
-  // Exhausted retries on repeated network errors.
-  throw lastErr;
-}
-
-// Exponential backoff with a Retry-After override (429s). attempt is 1-based.
-function backoffMs(attempt, retryAfter) {
-  const ra = Number.parseInt(retryAfter ?? '', 10);
-  if (Number.isFinite(ra) && ra > 0) return Math.min(ra * 1000, 30000);
-  return Math.min(500 * 2 ** (attempt - 1), 8000);
+  return { ok: res.ok, status: res.status, json };
 }
 
 /**
@@ -152,15 +232,16 @@ function backoffMs(attempt, retryAfter) {
  * Throws with a clear message on any non-ok page.
  * @param {{ key: string }} acct account object
  * @param {string} path API path (query string allowed)
+ * @param {object} [opts] hub()/fetchWithRetry options
  * @returns {Promise<any[]>} concatenated results
  */
-export async function getAll(acct, path) {
+export async function getAll(acct, path, opts = {}) {
   const out = [];
   let after;
   do {
     const sep = path.includes('?') ? '&' : '?';
     const url = `${path}${sep}limit=100${after ? `&after=${after}` : ''}`;
-    const { ok, status, json } = await hub(acct, 'GET', url);
+    const { ok, status, json } = await hub(acct, 'GET', url, undefined, opts);
     if (!ok) {
       const msg = json?.message || json?.category || JSON.stringify(json).slice(0, 200);
       throw new Error(`GET ${url} -> ${status}: ${msg}`);
