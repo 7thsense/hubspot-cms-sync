@@ -92,11 +92,23 @@ async function republish(argv = process.argv.slice(2), opts = {}) {
   console.log(`republishing ${targets.length} page(s) on ${portal} @ ${fut}`);
   for (const p of targets) await schedule('pages/site-pages', p.id);
 
+  // Blog posts cannot go through /schedule: it requires a FUTURE publishDate (HubSpot
+  // returns 400 for a past one), and scheduling "now" would rewrite the post's real
+  // date. A live post's draft buffer is pushed live instead, which re-renders it and
+  // keeps publishDate untouched — the same call the blog adapter uses for already-live
+  // posts. Like the page /schedule above, this publishes the CURRENT draft, so any
+  // unpublished edits made in the HubSpot editor go live too.
+  async function pushLive(id) {
+    const { status } = await hub('POST', `/cms/v3/blogs/posts/${id}/draft/push-live`, {});
+    if (status >= 200 && status < 300) ok++;
+    else { fail++; console.error(`  blogs/posts ${id} -> push-live ${status}`); }
+  }
+
   if (parsed.blog) {
     const posts = (await getAll('/cms/v3/blogs/posts?property=id,slug,state,publishDate'))
       .filter((p) => p.state === 'PUBLISHED' && !/temporary-slug/.test(p.slug || ''));
-    console.log(`republishing ${posts.length} blog post(s) (preserving publishDate)`);
-    for (const p of posts) await schedule('blogs/posts', p.id, p.publishDate);
+    console.log(`republishing ${posts.length} blog post(s) via draft/push-live (publishDate unchanged)`);
+    for (const p of posts) await pushLive(p.id);
   }
   console.log(`scheduled ${ok} | already-scheduled ${skipped} | failed ${fail} (live in ~90s)`);
   return fail ? 1 : 0;
